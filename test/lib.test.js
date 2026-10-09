@@ -33,6 +33,26 @@ test("微博 original 字段中的 orj1080 地址改用完整尺寸", () => {
     "https://wx1.sinaimg.cn/large/005RkDaQly1ihvtybm8rmj33ls5itnpj.jpg");
 });
 
+test("Live Photo 同时提取静态原图和对应的 MOV", () => {
+  const video = "https://video.weibo.com/media/play?livephoto=https%3A%2F%2Flivephoto.us.sinaimg.cn%2Fclip.mov";
+  const result = lib.parseStatus({
+    pic_ids: ["a", "b"],
+    pic_infos: {
+      a: { type: "livephoto", largest: { url: "https://wx1.sinaimg.cn/large/a.jpg" }, video },
+      b: { largest: { url: "https://wx1.sinaimg.cn/large/b.jpg" } }
+    }
+  });
+  assert.equal(result.pictures[0].url, "https://wx1.sinaimg.cn/large/a.jpg");
+  assert.equal(result.pictures[0].liveUrl, video);
+  assert.equal(result.pictures[1].liveUrl, undefined);
+  assert.equal(lib.extensionFromUrl(video), ".mov");
+  assert.equal(lib.extensionFromUrl(`${video}%3FExpires%3D123`), ".mov");
+  assert.equal(result.missing, 0);
+  assert.equal(lib.livePhotoUrl({ type: "livephoto", video: "https://example.com/clip.mov" }), null);
+  assert.equal(lib.livePhotoUrl({ type: "livephoto", video: "http://livephoto.us.sinaimg.cn/clip.mov" }),
+    "https://livephoto.us.sinaimg.cn/clip.mov");
+});
+
 test("无自有图片的转发微博使用原微博作者和图片", () => {
   const result = lib.parseStatus({
     user: { screen_name: "转发者", idstr: "1" },

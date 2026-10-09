@@ -13,10 +13,10 @@ async function render() {
   const complete = job.images.filter(image => image.state === "complete").length;
   const failed = job.images.filter(image => image.state === "failed").length + job.missing;
   const total = job.images.length + job.missing;
-  summary.textContent = `${job.author} · ${job.status === "running" ? "下载中" : "已完成"}：${complete}/${total} 张成功，${failed} 张失败`;
-  if (job.missing) addError(`${job.missing} 张图片没有可确认的原图地址`);
+  summary.textContent = `${job.author} · ${job.status === "running" ? "下载中" : "已完成"}：${complete}/${total} 个文件成功，${failed} 个文件失败`;
+  if (job.missing) addError(`${job.missing} 个原图或 Live 动态文件地址不可用`);
   for (const image of job.images.filter(item => item.state === "failed")) {
-    addError(`第 ${image.index + 1} 张：${image.error}`);
+    addError(`第 ${image.index + 1} 张${image.kind === "live" ? "的 Live 动态文件" : "的原图"}：${image.error}`);
   }
 }
 

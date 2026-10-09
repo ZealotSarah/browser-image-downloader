@@ -41,3 +41,16 @@ test("拒绝图片站返回的 HTML 错误页", async () => {
   assert.equal(result.ok, false);
   assert.match(result.error, /非图片/);
 });
+
+test("Live Photo 接受 MOV 响应，拒绝错误网页", async () => {
+  const url = "https://video.weibo.com/media/play?livephoto=https%3A%2F%2Flivephoto.us.sinaimg.cn%2Fclip.mov";
+  const app = loadOffscreen({
+    ok: true, headers: { get: () => "application/octet-stream" },
+    blob: async () => new Blob(["mov"], { type: "application/octet-stream" })
+  });
+  assert.equal((await app.send({ type: "FETCH_IMAGE", kind: "live", token: "1", url })).ok, true);
+  const bad = loadOffscreen({ ok: true, headers: { get: () => "text/html" } });
+  const result = await bad.send({ type: "FETCH_IMAGE", kind: "live", token: "2", url });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /非视频/);
+});

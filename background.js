@@ -63,7 +63,7 @@ async function ensureOffscreen() {
 
 async function fetchImageBlob(image, token) {
   await ensureOffscreen();
-  const response = await chrome.runtime.sendMessage({ target: "offscreen", type: "FETCH_IMAGE", url: image.url, token });
+  const response = await chrome.runtime.sendMessage({ target: "offscreen", type: "FETCH_IMAGE", url: image.url, kind: image.kind, token });
   if (!response?.ok) throw new Error(response?.error || "无法获取原图");
   return response.blobUrl;
 }
@@ -102,7 +102,7 @@ async function finishIfDone(job) {
   try { await closeOffscreen(); } catch (error) { console.error("关闭图片处理页面失败：", error); }
   const done = job.images.filter(image => image.state === "complete").length;
   const failed = job.images.filter(image => image.state === "failed").length + job.missing;
-  await toast(job.tabId, `微博原图下载完成：成功 ${done} 张，失败 ${failed} 张。点击插件图标查看详情。`);
+  await toast(job.tabId, `微博原图下载完成：成功 ${done} 个文件，失败 ${failed} 个文件。点击插件图标查看详情。`);
 }
 
 async function pump(job) {
@@ -156,16 +156,17 @@ async function startDownload(tab) {
   }
 
   const data = response.data;
-  const images = data.pictures.map((picture, index) => ({
-    index, url: picture.url, state: "queued", attempts: 0, downloadId: null, error: ""
-  }));
+  const images = data.pictures.flatMap((picture, index) => [
+    { index, kind: "image", url: picture.url },
+    ...(picture.liveUrl ? [{ index, kind: "live", url: picture.liveUrl }] : [])
+  ].map(file => ({ ...file, state: "queued", attempts: 0, downloadId: null, error: "" })));
   const job = {
     id: crypto.randomUUID(), tabId: tab.id, postId: data.postId,
     author: data.author, userId: data.userId, createdAt: Date.now(),
     missing: data.missing, images, status: "running"
   };
   await saveJob(job);
-  await toast(tab.id, `已找到 ${images.length} 张原图，开始下载。${job.missing ? `另有 ${job.missing} 张原图地址不可用。` : ""}`);
+  await toast(tab.id, `已找到 ${data.pictures.length} 张原图和 ${images.length - data.pictures.length} 个 Live 动态文件，开始下载。${job.missing ? `另有 ${job.missing} 个文件地址不可用。` : ""}`);
   try {
     await setImageReferrers(images);
   } catch (error) {

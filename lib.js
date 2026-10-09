@@ -1,7 +1,6 @@
 /* Shared, DOM-independent helpers. */
 globalThis.WeiboImages = (() => {
   const IMAGE_HOST = /(^|\.)sinaimg\.cn$/i;
-  const IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp|avif)$/i;
 
   function imageUrl(value) {
     const raw = typeof value === "string" ? value : value?.url;
@@ -24,6 +23,18 @@ globalThis.WeiboImages = (() => {
     return url.href;
   }
 
+  function livePhotoUrl(info) {
+    if (info?.type !== "livephoto" || typeof info.video !== "string") return null;
+    try {
+      const raw = info.video.startsWith("//") ? `https:${info.video}` : info.video.replace(/^http:/i, "https:");
+      const url = new URL(raw);
+      if (url.protocol !== "https:") return null;
+      if (url.hostname === "video.weibo.com" && url.pathname === "/media/play" && url.searchParams.has("livephoto")) return url.href;
+      if (IMAGE_HOST.test(url.hostname) && /\.(mov|mp4)$/i.test(url.pathname)) return url.href;
+    } catch { /* Invalid video URL. */ }
+    return null;
+  }
+
   function parseStatus(status) {
     let source = status;
     if (!hasPictures(source) && source?.retweeted_status) source = source.retweeted_status;
@@ -40,7 +51,9 @@ globalThis.WeiboImages = (() => {
       const key = String(id || url);
       if (seen.has(key)) return;
       seen.add(key);
-      pictures.push({ id: key, url });
+      const liveUrl = livePhotoUrl(info);
+      if (info?.type === "livephoto" && !liveUrl) missing++;
+      pictures.push({ id: key, url, ...(liveUrl ? { liveUrl } : {}) });
     }
 
     if (Array.isArray(source?.pic_ids) && source.pic_ids.length) {
@@ -93,7 +106,10 @@ globalThis.WeiboImages = (() => {
 
   function extensionFromUrl(raw) {
     try {
-      const match = new URL(raw).pathname.match(IMAGE_EXT);
+      const url = new URL(raw);
+      const nested = url.searchParams.get("livephoto");
+      const path = nested ? new URL(nested.startsWith("//") ? `https:${nested}` : nested).pathname : url.pathname;
+      const match = path.match(/\.(jpe?g|png|gif|webp|bmp|avif|mov|mp4)$/i);
       return match ? `.${match[1].toLowerCase().replace("jpeg", "jpg")}` : "";
     } catch {
       return "";
@@ -112,5 +128,5 @@ globalThis.WeiboImages = (() => {
     }
   }
 
-  return { imageUrl, originalUrl, parseStatus, safeSegment, normalizeSubfolder, extensionFromUrl, postIdFromUrl };
+  return { imageUrl, originalUrl, livePhotoUrl, parseStatus, safeSegment, normalizeSubfolder, extensionFromUrl, postIdFromUrl };
 })();
