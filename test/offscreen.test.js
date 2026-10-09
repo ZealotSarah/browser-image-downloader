@@ -42,6 +42,22 @@ test("拒绝图片站返回的 HTML 错误页", async () => {
   assert.match(result.error, /非图片/);
 });
 
+test("新浪图片跳转到屏蔽占位图时不生成下载文件", async () => {
+  const app = loadOffscreen({
+    ok: false,
+    status: 403,
+    url: "https://wx2.sinaimg.cn/images/default_d_h_large.gif#101",
+    headers: { get: () => "image/gif" },
+    blob: async () => { throw new Error("屏蔽图不应读取为 Blob"); }
+  });
+  const result = await app.send({
+    type: "FETCH_IMAGE", kind: "image", token: "1",
+    url: "https://wx2.sinaimg.cn/large/0074cU6vgy1ihkuro7vz4j323u35shdt.jpg"
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocked, true);
+});
+
 test("Live Photo 接受 MOV 响应，拒绝错误网页", async () => {
   const url = "https://video.weibo.com/media/play?livephoto=https%3A%2F%2Flivephoto.us.sinaimg.cn%2Fclip.mov";
   const app = loadOffscreen({

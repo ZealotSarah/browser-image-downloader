@@ -17,7 +17,8 @@ async function showBadge(job) {
   const running = job?.status === "running";
   const failed = job?.images.filter(image => image.state === "failed").length || 0;
   const done = job?.images.filter(image => image.state === "complete").length || 0;
-  await chrome.action.setBadgeText({ text: running ? String(done) : failed ? "!" : job ? "✓" : "" });
+  const skipped = job?.images.filter(image => image.state === "skipped").length || 0;
+  await chrome.action.setBadgeText({ text: running ? String(done) : failed ? "!" : skipped && !done ? "–" : job ? "✓" : "" });
   await chrome.action.setBadgeBackgroundColor({ color: failed ? "#c83b32" : "#288447" });
 }
 
@@ -64,7 +65,11 @@ async function ensureOffscreen() {
 async function fetchImageBlob(image, token) {
   await ensureOffscreen();
   const response = await chrome.runtime.sendMessage({ target: "offscreen", type: "FETCH_IMAGE", url: image.url, kind: image.kind, token });
-  if (!response?.ok) throw new Error(response?.error || "无法获取原图");
+  if (!response?.ok) {
+    const error = new Error(response?.error || "无法获取原图");
+    error.blocked = Boolean(response?.blocked);
+    throw error;
+  }
   return response.blobUrl;
 }
 
@@ -101,8 +106,9 @@ async function finishIfDone(job) {
   try { await setImageReferrers([]); } catch (error) { console.error("清理图片下载规则失败：", error); }
   try { await closeOffscreen(); } catch (error) { console.error("关闭图片处理页面失败：", error); }
   const done = job.images.filter(image => image.state === "complete").length;
+  const skipped = job.images.filter(image => image.state === "skipped").length;
   const failed = job.images.filter(image => image.state === "failed").length + job.missing;
-  await toast(job.tabId, `微博原图下载完成：成功 ${done} 个文件，失败 ${failed} 个文件。点击插件图标查看详情。`);
+  await toast(job.tabId, `微博原图下载完成：成功 ${done} 个文件${skipped ? `，跳过 ${skipped} 张屏蔽图` : ""}，失败 ${failed} 个文件。点击插件图标查看详情。`);
 }
 
 async function pump(job) {
@@ -130,7 +136,7 @@ async function pump(job) {
       await releaseImageBlob(image.blobToken);
       image.blobToken = null;
       image.error = error.message;
-      image.state = image.attempts < 2 ? "queued" : "failed";
+      image.state = error.blocked ? "skipped" : image.attempts < 2 ? "queued" : "failed";
     }
     await saveJob(job);
   }

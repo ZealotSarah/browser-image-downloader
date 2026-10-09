@@ -19,6 +19,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         : WeiboImages.imageUrl(message.url);
       if (!url) throw new Error("媒体地址无效");
       const response = await fetch(url, { signal: AbortSignal.timeout(25000) });
+      const finalUrl = !live && WeiboImages.imageUrl(response.url);
+      if (finalUrl && new URL(finalUrl).pathname === "/images/default_d_h_large.gif") {
+        sendResponse({ ok: false, blocked: true, error: "微博已屏蔽这张图片" });
+        return;
+      }
       if (!response.ok) throw new Error(`图片站返回 HTTP ${response.status}`);
       const type = response.headers.get("content-type") || "";
       if (live ? !/^(video\/|application\/(octet-stream|quicktime))/i.test(type)

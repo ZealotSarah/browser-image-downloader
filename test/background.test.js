@@ -4,7 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://wx1.sinaimg.cn/large/${number}.jpg` }))) {
+function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://wx1.sinaimg.cn/large/${number}.jpg` })), blockedUrl = null) {
   const files = name => fs.readFileSync(path.join(__dirname, "..", name), "utf8");
   const listeners = {};
   const stored = {};
@@ -48,6 +48,7 @@ function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://w
       async sendMessage(message) {
         if (message.type === "FETCH_IMAGE") {
           assert.equal(sessionRules.length, pictures.reduce((count, picture) => count + 1 + Number(Boolean(picture.liveUrl)), 0));
+          if (message.url === blockedUrl) return { ok: false, blocked: true, error: "微博已屏蔽这张图片" };
           blobs.add(message.token);
           return { ok: true, blobUrl: `blob:chrome-extension://test/${message.token}` };
         }
@@ -113,4 +114,22 @@ test("Live Photo 的 JPG 和 MOV 使用相同序号分别下载", async () => {
   }
   assert.equal(app.stored.job.status, "done");
   assert.equal(app.stored.job.images.filter(image => image.state === "complete").length, 2);
+});
+
+test("屏蔽占位图直接跳过，其余图片照常下载", async () => {
+  const blockedUrl = "https://wx2.sinaimg.cn/large/blocked.jpg";
+  const app = loadBackground([
+    { url: blockedUrl },
+    { url: "https://wx1.sinaimg.cn/large/normal.jpg" }
+  ], blockedUrl);
+  app.listeners.menuClicked({ menuItemId: "download-weibo-originals" }, { id: 7 });
+  await vm.runInContext("operation", app.context);
+  assert.equal(app.stored.job.images[0].state, "skipped");
+  assert.equal(app.stored.job.images[0].attempts, 1);
+  assert.equal(app.started.length, 1);
+  assert.match(app.started[0].filename, /_02\.jpg$/);
+  app.listeners.downloadChanged({ id: 1, state: { current: "complete" } });
+  await vm.runInContext("operation", app.context);
+  assert.equal(app.stored.job.status, "done");
+  assert.ok(app.messages.some(message => message.type === "TOAST" && message.text.includes("跳过 1 张屏蔽图")));
 });
