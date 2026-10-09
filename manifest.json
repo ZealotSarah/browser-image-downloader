@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "116",
+  "name": "微博单篇原图下载",
+  "version": "0.1.1",
+  "description": "在微博上右键下载当前微博的全部原图，并按博主分类保存。",
+  "permissions": ["contextMenus", "downloads", "storage", "offscreen", "declarativeNetRequestWithHostAccess"],
+  "host_permissions": ["https://weibo.com/*", "https://www.weibo.com/*", "https://*.sinaimg.cn/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "微博原图下载" },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["https://weibo.com/*", "https://www.weibo.com/*"],
+      "js": ["lib.js", "content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>微博原图下载设置</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="panel">
+    <h1>微博原图下载设置</h1>
+    <form id="settings-form">
+      <label for="subfolder">下载子文件夹</label>
+      <input id="subfolder" type="text" maxlength="80" autocomplete="off" placeholder="微博原图">
+      <p class="hint">填写一个文件夹名称；留空则直接保存到 Chrome 下载目录。</p>
+      <label class="checkbox"><input id="group-by-author" type="checkbox"> 按博主名字和用户 ID 分类</label>
+      <button type="submit">保存设置</button>
+      <p id="message" role="status"></p>
+    </form>
+    <p class="hint">主下载目录由 Chrome 控制。如需更改磁盘位置，请前往 Chrome 的下载设置。</p>
+  </main>
+  <script src="lib.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+:root { color-scheme: light; font: 14px/1.5 system-ui, sans-serif; color: #242424; background: #f6f7f9; }
+body { margin: 0; }
+.panel { box-sizing: border-box; max-width: 520px; margin: 40px auto; padding: 24px; background: white; border-radius: 12px; box-shadow: 0 4px 24px #00000012; }
+h1 { font-size: 20px; margin: 0 0 20px; }
+label { display: block; font-weight: 600; margin: 16px 0 6px; }
+input[type="text"] { box-sizing: border-box; width: 100%; padding: 9px 11px; border: 1px solid #bfc4cc; border-radius: 6px; font: inherit; }
+.checkbox { display: flex; gap: 8px; align-items: center; font-weight: 400; }
+.checkbox input { margin: 0; }
+.hint { color: #666; font-size: 13px; margin: 6px 0 16px; }
+button { border: 0; border-radius: 6px; background: #d84b28; color: white; padding: 9px 16px; font: inherit; cursor: pointer; }
+button:hover { background: #b63b1b; }
+#message { min-height: 1.5em; }
+.success { color: #207c46; }
+.error { color: #bb352c; }
+.popup { width: 340px; }
+.popup .panel { margin: 0; border-radius: 0; box-shadow: none; padding: 18px; }
+.popup h1 { font-size: 17px; margin-bottom: 10px; }
+.popup #summary { margin: 0 0 12px; }
+.popup #errors { color: #bb352c; padding-left: 20px; max-height: 160px; overflow: auto; }

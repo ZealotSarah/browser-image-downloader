@@ -1,0 +1,99 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const test = require("node:test");
+const vm = require("node:vm");
+
+function loadBackground() {
+  const files = name => fs.readFileSync(path.join(__dirname, "..", name), "utf8");
+  const listeners = {};
+  const stored = {};
+  const started = [];
+  const messages = [];
+  let sessionRules = [];
+  let offscreenOpen = false;
+  const blobs = new Set();
+  let nextId = 1;
+  const chrome = {
+    storage: { local: {
+      async get(key) { return { [key]: stored[key] }; },
+      async set(values) { Object.assign(stored, structuredClone(values)); }
+    } },
+    action: { async setBadgeText() {}, async setBadgeBackgroundColor() {} },
+    tabs: { async sendMessage(tabId, message) {
+      messages.push(message);
+      if (message.type === "RESOLVE_POST") return { ok: true, data: {
+        postId: "post1", author: "博主", userId: "42", missing: 0,
+        pictures: [1, 2, 3, 4].map(number => ({ url: `https://wx1.sinaimg.cn/large/${number}.jpg` }))
+      } };
+    } },
+    downloads: {
+      async download(options) { assert.match(options.url, /^blob:chrome-extension:/); started.push(options); return nextId++; },
+      async search() { return [{ mime: "image/jpeg" }]; },
+      onChanged: { addListener(callback) { listeners.downloadChanged = callback; } }
+    },
+    declarativeNetRequest: {
+      async getSessionRules() { return sessionRules; },
+      async updateSessionRules({ removeRuleIds, addRules }) {
+        sessionRules = sessionRules.filter(rule => !removeRuleIds.includes(rule.id)).concat(addRules);
+      }
+    },
+    contextMenus: {
+      async removeAll() {}, create() {},
+      onClicked: { addListener(callback) { listeners.menuClicked = callback; } }
+    },
+    runtime: {
+      getURL(name) { return `chrome-extension://test/${name}`; },
+      async getContexts() { return offscreenOpen ? [{}] : []; },
+      async sendMessage(message) {
+        if (message.type === "FETCH_IMAGE") {
+          assert.equal(sessionRules.length, 4);
+          blobs.add(message.token);
+          return { ok: true, blobUrl: `blob:chrome-extension://test/${message.token}` };
+        }
+        if (message.type === "RELEASE_IMAGE") {
+          blobs.delete(message.token);
+          return { ok: true };
+        }
+      },
+      onInstalled: { addListener(callback) { listeners.installed = callback; } },
+      onStartup: { addListener(callback) { listeners.startup = callback; } }
+    },
+    offscreen: {
+      async createDocument() { offscreenOpen = true; },
+      async closeDocument() { offscreenOpen = false; }
+    }
+  };
+  const context = vm.createContext({ chrome, URL, crypto: { randomUUID: () => "job1" }, console });
+  context.importScripts = name => vm.runInContext(files(name), context);
+  vm.runInContext(files("background.js"), context);
+  return { context, listeners, stored, started, messages, getSessionRules: () => sessionRules, getBlobs: () => blobs, isOffscreenOpen: () => offscreenOpen };
+}
+
+test("一次只启动三张图片，完成后补位并汇总结果", async () => {
+  const app = loadBackground();
+  app.listeners.menuClicked({ menuItemId: "download-weibo-originals" }, { id: 7 });
+  await vm.runInContext("operation", app.context);
+  assert.equal(app.started.length, 3);
+  assert.equal(app.getBlobs().size, 3);
+  assert.equal(app.getSessionRules().length, 4);
+  assert.equal(app.getSessionRules()[0].action.requestHeaders[0].value, "https://weibo.com/");
+  assert.equal(app.getSessionRules()[0].condition.urlFilter, "|https://wx1.sinaimg.cn/large/1.jpg|");
+  assert.equal(app.stored.job.status, "running");
+  assert.match(app.started[0].filename, /^微博原图\/博主_42\/\d{8}_post1_01\.jpg$/);
+
+  app.listeners.downloadChanged({ id: 1, state: { current: "complete" } });
+  await vm.runInContext("operation", app.context);
+  assert.equal(app.started.length, 4);
+
+  for (const id of [2, 3, 4]) {
+    app.listeners.downloadChanged({ id, state: { current: "complete" } });
+    await vm.runInContext("operation", app.context);
+  }
+  assert.equal(app.stored.job.status, "done");
+  assert.equal(app.getSessionRules().length, 0);
+  assert.equal(app.getBlobs().size, 0);
+  assert.equal(app.isOffscreenOpen(), false);
+  assert.equal(app.stored.job.images.filter(image => image.state === "complete").length, 4);
+  assert.ok(app.messages.some(message => message.type === "TOAST" && message.text.includes("成功 4 张")));
+});
