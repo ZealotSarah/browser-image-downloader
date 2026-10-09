@@ -25,6 +25,14 @@ test("按 pic_ids 顺序提取明确的原图并报告缺失", () => {
   assert.equal(result.missing, 1);
 });
 
+test("微博 original 字段中的 orj1080 地址改用完整尺寸", () => {
+  const source = "https://wx1.sinaimg.cn/orj1080/005RkDaQly1ihvtybm8rmj33ls5itnpj.jpg";
+  assert.equal(lib.originalUrl({ original: { url: source } }),
+    "https://wx1.sinaimg.cn/large/005RkDaQly1ihvtybm8rmj33ls5itnpj.jpg");
+  assert.equal(lib.originalUrl({ largest: { url: source } }),
+    "https://wx1.sinaimg.cn/large/005RkDaQly1ihvtybm8rmj33ls5itnpj.jpg");
+});
+
 test("无自有图片的转发微博使用原微博作者和图片", () => {
   const result = lib.parseStatus({
     user: { screen_name: "转发者", idstr: "1" },

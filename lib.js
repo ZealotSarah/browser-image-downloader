@@ -16,8 +16,12 @@ globalThis.WeiboImages = (() => {
 
   function originalUrl(info) {
     if (!info || typeof info !== "object") return null;
-    // These fields are explicit image variants from Weibo post data.
-    return imageUrl(info.original) || imageUrl(info.largest);
+    const raw = imageUrl(info.original) || imageUrl(info.largest);
+    if (!raw) return null;
+    const url = new URL(raw);
+    // Weibo may label an orj1080-sized image as "original" in post data.
+    url.pathname = url.pathname.replace(/^\/orj1080\//i, "/large/");
+    return url.href;
   }
 
   function parseStatus(status) {
