@@ -1,8 +1,11 @@
-importScripts("lib.js");
+importScripts("lib.js", "instagram-lib.js", "video-lib.js");
 
 const MENU_ID = "download-weibo-originals";
 const INSTAGRAM_MENU_ID = "download-instagram-images";
-const DEFAULT_SETTINGS = { downloadSubfolder: "微博原图", instagramSubfolder: "Instagram图片", groupByAuthor: true };
+const WEIBO_VIDEO_MENU_ID = "download-weibo-videos";
+const INSTAGRAM_VIDEO_MENU_ID = "download-instagram-videos";
+const DEFAULT_SETTINGS = { downloadSubfolder: "微博原图", instagramSubfolder: "Instagram图片",
+  weiboVideoSubfolder: "微博视频", instagramVideoSubfolder: "Instagram视频", groupByAuthor: true };
 let operation = Promise.resolve();
 let creatingOffscreen = null;
 
@@ -88,7 +91,9 @@ async function closeOffscreen() {
 
 function makeFilename(job, image, settings) {
   const parts = [];
-  const subfolder = WeiboImages.normalizeSubfolder(job.site === "instagram" ? settings.instagramSubfolder : settings.downloadSubfolder);
+  const subfolder = WeiboImages.normalizeSubfolder(job.mediaType === "video"
+    ? job.site === "instagram" ? settings.instagramVideoSubfolder : settings.weiboVideoSubfolder
+    : job.site === "instagram" ? settings.instagramSubfolder : settings.downloadSubfolder);
   if (subfolder) parts.push(subfolder);
   if (settings.groupByAuthor) {
     parts.push(job.site === "instagram"
@@ -112,7 +117,7 @@ async function finishIfDone(job) {
   const done = job.images.filter(image => image.state === "complete").length;
   const skipped = job.images.filter(image => image.state === "skipped").length;
   const failed = job.images.filter(image => image.state === "failed").length + job.missing;
-  await toast(job.tabId, `${job.site === "instagram" ? "Instagram 图片" : "微博原图"}下载完成：成功 ${done} 个文件${skipped ? `，跳过 ${skipped} 张屏蔽图` : ""}，失败 ${failed} 个文件。点击插件图标查看详情。`);
+  await toast(job.tabId, `${job.site === "instagram" ? "Instagram" : "微博"}${job.mediaType === "video" ? "视频" : "图片"}下载完成：成功 ${done} 个文件${skipped ? `，跳过 ${skipped} 张屏蔽图` : ""}，失败 ${failed} 个文件。点击插件图标查看详情。`);
 }
 
 async function pump(job) {
@@ -126,10 +131,17 @@ async function pump(job) {
     await saveJob(job);
     try {
       const token = `${job.id}-${image.index}-${image.kind}-${image.attempts}`;
-      const blobUrl = await fetchImageBlob(image, token);
-      image.blobToken = token;
+      let downloadUrl;
+      if (image.kind === "video") {
+        downloadUrl = VideoDownloads.videoUrl(image.url, image.site);
+        if (!downloadUrl) throw new Error("视频地址无效或为不支持的分片流");
+        image.extension = ".mp4";
+      } else {
+        image.blobToken = token;
+        downloadUrl = await fetchImageBlob(image, token);
+      }
       const id = await chrome.downloads.download({
-        url: blobUrl,
+        url: downloadUrl,
         filename: makeFilename(job, image, settings),
         saveAs: false,
         conflictAction: "uniquify"
@@ -154,7 +166,7 @@ async function pump(job) {
   await finishIfDone(job);
 }
 
-async function startDownload(tab, site = "weibo") {
+async function startDownload(tab, site = "weibo", mediaType = "image") {
   const previous = await getJob();
   if (previous?.status === "running") {
     await toast(tab.id, "已有一篇帖子正在下载，请等待完成后再试。");
@@ -162,7 +174,9 @@ async function startDownload(tab, site = "weibo") {
   }
   let response;
   try {
-    response = await chrome.tabs.sendMessage(tab.id, { type: site === "instagram" ? "RESOLVE_INSTAGRAM_POST" : "RESOLVE_POST" });
+    response = await chrome.tabs.sendMessage(tab.id, { type: mediaType === "video"
+      ? site === "instagram" ? "RESOLVE_INSTAGRAM_VIDEOS" : "RESOLVE_WEIBO_VIDEOS"
+      : site === "instagram" ? "RESOLVE_INSTAGRAM_POST" : "RESOLVE_POST" });
   } catch {
     await toast(tab.id, "无法读取当前页面，请刷新页面后重试。");
     return;
@@ -173,18 +187,22 @@ async function startDownload(tab, site = "weibo") {
   }
 
   const data = response.data;
-  const images = data.pictures.flatMap((picture, index) => [
-    { index, kind: "image", url: picture.url, site, width: picture.width, height: picture.height },
+  const media = mediaType === "video" ? data.videos : data.pictures;
+  const images = media.flatMap((picture, index) => [
+    { index, kind: mediaType, url: picture.url, site, width: picture.width, height: picture.height,
+      fps: picture.fps, bitrate: picture.bitrate },
     ...(picture.liveUrl ? [{ index, kind: "live", url: picture.liveUrl, site }] : [])
   ].map(file => ({ ...file, state: "queued", attempts: 0, downloadId: null, error: "" })));
   const job = {
-    id: crypto.randomUUID(), tabId: tab.id, postId: data.postId, site,
+    id: crypto.randomUUID(), tabId: tab.id, postId: data.postId, site, mediaType,
     author: data.author, userId: data.userId, createdAt: Date.now(),
     missing: data.missing, images, status: "running",
     qualitySource: data.qualitySource, qualityWarning: data.qualityWarning
   };
   await saveJob(job);
-  await toast(tab.id, `已找到 ${data.pictures.length} 张${site === "instagram" ? "图片" : "原图"}${site === "instagram" ? "" : `和 ${images.length - data.pictures.length} 个 Live 动态文件`}，开始下载。${job.missing ? `另有 ${job.missing} 个文件地址不可用。` : ""}${job.qualityWarning || ""}`);
+  await toast(tab.id, mediaType === "video"
+    ? `已找到 ${media.length} 个最高规格完整视频，开始下载。${job.missing ? `另有 ${job.missing} 个视频无法取得带音频的完整文件或分辨率信息。` : ""}`
+    : `已找到 ${data.pictures.length} 张${site === "instagram" ? "图片" : "原图"}${site === "instagram" ? "" : `和 ${images.length - data.pictures.length} 个 Live 动态文件`}，开始下载。${job.missing ? `另有 ${job.missing} 个文件地址不可用。` : ""}${job.qualityWarning || ""}`);
   try {
     await setImageReferrers(images, site);
   } catch (error) {
@@ -208,10 +226,11 @@ async function handleDownloadChange(delta) {
 
   if (state === "complete") {
     const [item] = await chrome.downloads.search({ id: delta.id });
-    if (/^(text\/html|application\/json)/i.test(item?.mime || "")) {
+    if (/^(text\/html|application\/json)/i.test(item?.mime || "") ||
+      (image.kind === "video" && !/^(video\/mp4|application\/octet-stream)(?:;|$)/i.test(item?.mime || ""))) {
       try { await chrome.downloads.removeFile(delta.id); } catch { /* May already be gone. */ }
       image.state = "failed";
-      image.error = "原图链接返回了网页或错误信息";
+      image.error = image.kind === "video" ? "视频地址未返回完整 MP4 文件（可能为错误页、音频或分片流）" : "原图链接返回了网页或错误信息";
     } else {
       image.state = "complete";
       image.error = "";
@@ -272,6 +291,12 @@ chrome.runtime.onInstalled.addListener(() => {
       contexts: ["page", "image", "link"],
       documentUrlPatterns: ["https://www.instagram.com/*"]
     });
+    for (const site of ["weibo", "instagram"]) chrome.contextMenus.create({
+      id: site === "weibo" ? WEIBO_VIDEO_MENU_ID : INSTAGRAM_VIDEO_MENU_ID,
+      title: `下载这篇${site === "weibo" ? "微博" : " Instagram 帖子"}的最高规格视频`,
+      contexts: ["page", "image", "link", "video"],
+      documentUrlPatterns: site === "weibo" ? ["https://weibo.com/*", "https://www.weibo.com/*"] : ["https://www.instagram.com/*"]
+    });
   });
   runSerial(recover);
 });
@@ -279,5 +304,7 @@ chrome.runtime.onStartup.addListener(() => runSerial(recover));
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === MENU_ID && tab?.id) runSerial(() => startDownload(tab));
   if (info.menuItemId === INSTAGRAM_MENU_ID && tab?.id) runSerial(() => startDownload(tab, "instagram"));
+  if (info.menuItemId === WEIBO_VIDEO_MENU_ID && tab?.id) runSerial(() => startDownload(tab, "weibo", "video"));
+  if (info.menuItemId === INSTAGRAM_VIDEO_MENU_ID && tab?.id) runSerial(() => startDownload(tab, "instagram", "video"));
 });
 chrome.downloads.onChanged.addListener(delta => runSerial(() => handleDownloadChange(delta)));

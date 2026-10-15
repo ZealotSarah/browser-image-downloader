@@ -24,7 +24,7 @@
     } : null;
   }, true);
 
-  async function resolvePost() {
+  async function resolvePost(video = false) {
     const context = lastContext;
     if (!context?.id || !context.card.isConnected || context.pageUrl !== location.href || Date.now() - context.time > 30000) {
       throw new Error("未找到右键所在的微博，请在微博内容区域重试");
@@ -37,6 +37,11 @@
     if (!response.ok) throw new Error(`微博详情获取失败（HTTP ${response.status}），请检查登录状态`);
     const status = await response.json();
     if (status?.error) throw new Error(`微博详情获取失败：${status.error}`);
+    if (video) {
+      const parsed = VideoDownloads.parseWeibo(status);
+      if (!parsed.videos.length && !parsed.missing) throw new Error("这篇微博没有视频");
+      return parsed;
+    }
     const parsed = WeiboImages.parseStatus(status);
     if (!parsed.pictures.length && !parsed.missing) throw new Error("这篇微博没有图片");
     return { postId: String(status.idstr || status.id || context.id), ...parsed };
@@ -58,8 +63,8 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "RESOLVE_POST") {
-      resolvePost().then(data => sendResponse({ ok: true, data }))
+    if (message?.type === "RESOLVE_POST" || message?.type === "RESOLVE_WEIBO_VIDEOS") {
+      resolvePost(message.type === "RESOLVE_WEIBO_VIDEOS").then(data => sendResponse({ ok: true, data }))
         .catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
     }

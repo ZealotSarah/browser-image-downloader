@@ -9,6 +9,7 @@ function loadInstagram(fetch, detail = false, recommendation = false) {
   let listener;
   const card = {
     isConnected: true,
+    matches: () => false,
     querySelector: () => ({}),
     querySelectorAll(selector) {
       if (selector === "img") return [{
@@ -21,6 +22,7 @@ function loadInstagram(fetch, detail = false, recommendation = false) {
     }
   };
   class Element {
+    matches() { return false; }
     closest() { return detail ? null : card; }
     querySelectorAll() { return []; }
     get parentElement() { return card; }
@@ -30,11 +32,11 @@ function loadInstagram(fetch, detail = false, recommendation = false) {
     document: { addEventListener(type, callback) { contextmenu = callback; } },
     chrome: { runtime: { onMessage: { addListener(callback) { listener = callback; } } } }
   });
-  for (const name of ["instagram-lib.js", "instagram.js"]) {
+  for (const name of ["instagram-lib.js", "video-lib.js", "instagram.js"]) {
     vm.runInContext(fs.readFileSync(path.join(__dirname, "..", name), "utf8"), context);
   }
   contextmenu({ target: new Element() });
-  return () => new Promise(resolve => listener({ type: "RESOLVE_INSTAGRAM_POST" }, {}, resolve));
+  return (type = "RESOLVE_INSTAGRAM_POST") => new Promise(resolve => listener({ type }, {}, resolve));
 }
 
 test("使用当前登录会话读取高清接口，无需操作轮播", async () => {
@@ -73,4 +75,19 @@ test("详情页下方推荐帖不能被当作当前帖子下载", async () => {
   const response = await loadInstagram(async () => { throw new Error("不应请求接口"); }, true, true)();
   assert.equal(response.ok, false);
   assert.match(response.error, /未找到右键/);
+});
+
+test("视频请求读取 video_versions，不混入图片或使用页面播放流", async () => {
+  const response = await loadInstagram(async () => ({ ok: true, json: async () => ({ items: [{ code: "ABC", media_type: 2,
+    video_versions: [{ url: "https://scontent.cdninstagram.com/video.mp4", width: 1920, height: 1080 }] }] }) }))
+    ("RESOLVE_INSTAGRAM_VIDEOS");
+  assert.equal(response.ok, true);
+  assert.equal(response.data.videos[0].width, 1920);
+  assert.equal(response.data.pictures, undefined);
+});
+
+test("视频接口失败直接报告，不能回退成图片下载", async () => {
+  const response = await loadInstagram(async () => ({ ok: false, status: 429 }))("RESOLVE_INSTAGRAM_VIDEOS");
+  assert.equal(response.ok, false);
+  assert.match(response.error, /无法获取最高规格视频.*429/);
 });

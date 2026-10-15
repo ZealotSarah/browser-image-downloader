@@ -4,12 +4,13 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://wx1.sinaimg.cn/large/${number}.jpg` })), blockedUrl = null, webp = false) {
+function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://wx1.sinaimg.cn/large/${number}.jpg` })), blockedUrl = null, webp = false, videoData = null, downloadMime = "video/mp4") {
   const files = name => fs.readFileSync(path.join(__dirname, "..", name), "utf8");
   const listeners = {};
   const stored = {};
   const started = [];
   const messages = [];
+  const menus = [];
   let sessionRules = [];
   let offscreenOpen = false;
   const blobs = new Set();
@@ -22,14 +23,18 @@ function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://w
     action: { async setBadgeText() {}, async setBadgeBackgroundColor() {} },
     tabs: { async sendMessage(tabId, message) {
       messages.push(message);
+      if (message.type === "RESOLVE_WEIBO_VIDEOS" || message.type === "RESOLVE_INSTAGRAM_VIDEOS") {
+        return { ok: true, data: { postId: "post1", author: "博主", userId: "42", missing: 0, videos: videoData } };
+      }
       if (message.type === "RESOLVE_POST" || message.type === "RESOLVE_INSTAGRAM_POST") return { ok: true, data: {
         postId: "post1", author: "博主", userId: "42", missing: 0,
         pictures
       } };
     } },
     downloads: {
-      async download(options) { assert.match(options.url, /^blob:chrome-extension:/); started.push(options); return nextId++; },
-      async search() { return [{ mime: "image/jpeg" }]; },
+      async download(options) { if (!videoData) assert.match(options.url, /^blob:chrome-extension:/); started.push(options); return nextId++; },
+      async search() { return [{ mime: videoData ? downloadMime : "image/jpeg" }]; },
+      async removeFile() {},
       onChanged: { addListener(callback) { listeners.downloadChanged = callback; } }
     },
     declarativeNetRequest: {
@@ -39,7 +44,7 @@ function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://w
       }
     },
     contextMenus: {
-      async removeAll() {}, create() {},
+      async removeAll() {}, create(menu) { menus.push(menu); },
       onClicked: { addListener(callback) { listeners.menuClicked = callback; } }
     },
     runtime: {
@@ -67,9 +72,9 @@ function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://w
     }
   };
   const context = vm.createContext({ chrome, URL, crypto: { randomUUID: () => "job1" }, console });
-  context.importScripts = name => vm.runInContext(files(name), context);
+  context.importScripts = (...names) => names.forEach(name => vm.runInContext(files(name), context));
   vm.runInContext(files("background.js"), context);
-  return { context, listeners, stored, started, messages, getSessionRules: () => sessionRules, getBlobs: () => blobs, isOffscreenOpen: () => offscreenOpen };
+  return { context, listeners, stored, started, messages, menus, getSessionRules: () => sessionRules, getBlobs: () => blobs, isOffscreenOpen: () => offscreenOpen };
 }
 
 test("一次只启动三张图片，完成后补位并汇总结果", async () => {
@@ -162,4 +167,37 @@ test("Instagram WebP 同时保存同序号 PNG，两个下载使用独立 Blob �
   assert.equal(app.stored.job.status, "done");
   assert.equal(app.stored.job.images.filter(image => image.state === "complete").length, 2);
   assert.equal(app.getBlobs().size, 0);
+});
+
+test("视频菜单在播放器右键可用，使用直链下载、独立视频目录和站点来源", async () => {
+  for (const site of ["weibo", "instagram"]) {
+    const url = site === "weibo" ? "https://f.video.weibocdn.com/4k.mp4" : "https://scontent.cdninstagram.com/4k.mp4";
+    const app = loadBackground([], null, false, [{ url, width: 3840, height: 2160 }]);
+    app.listeners.installed();
+    await vm.runInContext("operation", app.context);
+    assert.ok(app.menus.find(menu => menu.id === `download-${site}-videos`).contexts.includes("video"));
+    app.listeners.menuClicked({ menuItemId: `download-${site}-videos` }, { id: 7 });
+    await vm.runInContext("operation", app.context);
+    assert.equal(app.started[0].url, url);
+    assert.match(app.started[0].filename, site === "weibo" ? /^微博视频\/博主_42\/.*_01.mp4$/ : /^Instagram视频\/博主\/.*_01.mp4$/);
+    assert.equal(app.isOffscreenOpen(), false);
+    assert.equal(app.stored.job.images[0].width, 3840);
+    assert.equal(app.getSessionRules()[0].action.requestHeaders[0].value, site === "weibo" ? "https://weibo.com/" : "https://www.instagram.com/");
+    app.listeners.downloadChanged({ id: 1, state: { current: "complete" } });
+    await vm.runInContext("operation", app.context);
+    assert.equal(app.stored.job.status, "done");
+    assert.equal(app.stored.job.images[0].state, "complete");
+  }
+});
+
+test("视频下载拒绝把图片、音频或分片清单当作成功 MP4", async () => {
+  for (const mime of ["image/jpeg", "audio/mp4", "application/vnd.apple.mpegurl", "text/html"]) {
+    const app = loadBackground([], null, false, [{ url: "https://f.video.weibocdn.com/file.mp4", width: 1920, height: 1080 }], mime);
+    app.listeners.menuClicked({ menuItemId: "download-weibo-videos" }, { id: 7 });
+    await vm.runInContext("operation", app.context);
+    app.listeners.downloadChanged({ id: 1, state: { current: "complete" } });
+    await vm.runInContext("operation", app.context);
+    assert.equal(app.stored.job.images[0].state, "failed");
+    assert.match(app.stored.job.images[0].error, /完整 MP4/);
+  }
 });

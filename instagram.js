@@ -4,14 +4,15 @@
   function postCard(target) {
     const article = target?.closest("article");
     if (article) return article;
-    const postId = InstagramImages.postIdFromUrl(location.href);
+    const postId = VideoDownloads.instagramPostId(location.href);
     if (!postId) return null;
     // Detail pages may use only divs. Stop before reaching other posts.
     for (let node = target; node; node = node.parentElement) {
       const ids = [...node.querySelectorAll("a[href]")]
-        .map(link => InstagramImages.postIdFromUrl(link.href)).filter(Boolean);
+        .map(link => VideoDownloads.instagramPostId(link.href)).filter(Boolean);
       if (ids.some(id => id !== postId)) return null;
-      if (ids.includes(postId) && node.querySelector("img")) return node;
+      if (ids.includes(postId) && node.querySelector("img, video")) return node;
+      if (node.matches("main, [role='main']") && node.querySelectorAll("video").length === 1) return node;
     }
     return null;
   }
@@ -22,12 +23,13 @@
     lastContext = card ? { card, pageUrl: location.href, time: Date.now() } : null;
   }, true);
 
-  function postIdFor(card) {
-    for (const link of card.querySelectorAll('a[href*="/p/"]')) {
-      const id = InstagramImages.postIdFromUrl(link.href);
+  function postIdFor(card, video = false) {
+    const parse = video ? VideoDownloads.instagramPostId : InstagramImages.postIdFromUrl;
+    for (const link of card.querySelectorAll('a[href]')) {
+      const id = parse(link.href);
       if (id) return id;
     }
-    return InstagramImages.postIdFromUrl(location.href);
+    return parse(location.href);
   }
 
   function collectPictures(card, pictures, seen) {
@@ -49,13 +51,13 @@
       ));
   }
 
-  async function resolvePost() {
+  async function resolvePost(video = false) {
     const context = lastContext;
     if (!context?.card.isConnected || context.pageUrl !== location.href || Date.now() - context.time > 30000) {
       throw new Error("未找到右键所在的 Instagram 帖子，请在帖子图片上重试");
     }
     const { card } = context;
-    const postId = postIdFor(card);
+    const postId = postIdFor(card, video);
     if (!postId) throw new Error("无法确认这篇 Instagram 帖子的链接");
     let qualityWarning;
     try {
@@ -65,10 +67,17 @@
         signal: AbortSignal.timeout(10000)
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = InstagramImages.parseMedia(await response.json(), postId);
+      const json = await response.json();
+      if (video) {
+        const data = VideoDownloads.parseInstagram(json, postId);
+        if (!data.videos.length && !data.missing) throw new Error("这篇 Instagram 帖子没有视频");
+        return data;
+      }
+      const data = InstagramImages.parseMedia(json, postId);
       if (!data.pictures.length && !data.missing) throw new Error("这篇 Instagram 帖子没有可下载的图片");
       if (data.pictures.length || data.missing) return data;
     } catch (error) {
+      if (video) throw new Error(`无法获取最高规格视频：${error.message}`);
       qualityWarning = `高清帖子数据不可用（${error.message}），本次使用页面最大图，清晰度可能较低。`;
     }
     const authorLink = [...card.querySelectorAll("header a[href], a[href]")].find(link =>
@@ -104,8 +113,8 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "RESOLVE_INSTAGRAM_POST") {
-      resolvePost().then(data => sendResponse({ ok: true, data }))
+    if (message?.type === "RESOLVE_INSTAGRAM_POST" || message?.type === "RESOLVE_INSTAGRAM_VIDEOS") {
+      resolvePost(message.type === "RESOLVE_INSTAGRAM_VIDEOS").then(data => sendResponse({ ok: true, data }))
         .catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
     }
