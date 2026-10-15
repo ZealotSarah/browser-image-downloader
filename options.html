@@ -3,17 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>微博原图下载设置</title>
+  <title>图片下载设置</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <main class="panel">
-    <h1>微博原图下载设置</h1>
+    <h1>图片下载设置</h1>
     <form id="settings-form">
-      <label for="subfolder">下载子文件夹</label>
+      <label for="subfolder">微博下载子文件夹</label>
       <input id="subfolder" type="text" maxlength="80" autocomplete="off" placeholder="微博原图">
+      <label for="instagram-subfolder">Instagram 下载子文件夹</label>
+      <input id="instagram-subfolder" type="text" maxlength="80" autocomplete="off" placeholder="Instagram图片">
       <p class="hint">填写一个文件夹名称；留空则直接保存到 Chrome 下载目录。</p>
-      <label class="checkbox"><input id="group-by-author" type="checkbox"> 按博主名字和用户 ID 分类</label>
+      <label class="checkbox"><input id="group-by-author" type="checkbox"> 按作者分类（微博：名称和用户 ID；Instagram：用户名）</label>
       <button type="submit">保存设置</button>
       <p id="message" role="status"></p>
     </form>

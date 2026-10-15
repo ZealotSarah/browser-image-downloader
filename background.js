@@ -1,7 +1,8 @@
 importScripts("lib.js");
 
 const MENU_ID = "download-weibo-originals";
-const DEFAULT_SETTINGS = { downloadSubfolder: "微博原图", groupByAuthor: true };
+const INSTAGRAM_MENU_ID = "download-instagram-images";
+const DEFAULT_SETTINGS = { downloadSubfolder: "微博原图", instagramSubfolder: "Instagram图片", groupByAuthor: true };
 let operation = Promise.resolve();
 let creatingOffscreen = null;
 
@@ -32,7 +33,7 @@ async function toast(tabId, text) {
   try { await chrome.tabs.sendMessage(tabId, { type: "TOAST", text }); } catch { /* Tab may have closed. */ }
 }
 
-async function setImageReferrers(images) {
+async function setImageReferrers(images, site = "weibo") {
   const existing = await chrome.declarativeNetRequest.getSessionRules();
   const urls = [...new Set(images.map(image => image.url))];
   await chrome.declarativeNetRequest.updateSessionRules({
@@ -42,7 +43,7 @@ async function setImageReferrers(images) {
       priority: 1,
       action: {
         type: "modifyHeaders",
-        requestHeaders: [{ header: "referer", operation: "set", value: "https://weibo.com/" }]
+        requestHeaders: [{ header: "referer", operation: "set", value: site === "instagram" ? "https://www.instagram.com/" : "https://weibo.com/" }]
       },
       condition: { urlFilter: `|${url}|`, requestMethods: ["get"] }
     }))
@@ -56,7 +57,7 @@ async function ensureOffscreen() {
   if (!creatingOffscreen) {
     creatingOffscreen = chrome.offscreen.createDocument({
       url: "offscreen.html", reasons: ["BLOBS"],
-      justification: "获取带来源请求头的微博原图并生成可下载文件"
+      justification: "获取图片并生成可下载文件"
     }).finally(() => { creatingOffscreen = null; });
   }
   await creatingOffscreen;
@@ -64,12 +65,13 @@ async function ensureOffscreen() {
 
 async function fetchImageBlob(image, token) {
   await ensureOffscreen();
-  const response = await chrome.runtime.sendMessage({ target: "offscreen", type: "FETCH_IMAGE", url: image.url, kind: image.kind, token });
+  const response = await chrome.runtime.sendMessage({ target: "offscreen", type: "FETCH_IMAGE", url: image.url, kind: image.kind, site: image.site, token });
   if (!response?.ok) {
     const error = new Error(response?.error || "无法获取原图");
     error.blocked = Boolean(response?.blocked);
     throw error;
   }
+  image.extension = response.extension;
   return response.blobUrl;
 }
 
@@ -86,16 +88,18 @@ async function closeOffscreen() {
 
 function makeFilename(job, image, settings) {
   const parts = [];
-  const subfolder = WeiboImages.normalizeSubfolder(settings.downloadSubfolder);
+  const subfolder = WeiboImages.normalizeSubfolder(job.site === "instagram" ? settings.instagramSubfolder : settings.downloadSubfolder);
   if (subfolder) parts.push(subfolder);
   if (settings.groupByAuthor) {
-    parts.push(`${WeiboImages.safeSegment(job.author)}_${WeiboImages.safeSegment(job.userId, "unknown")}`);
+    parts.push(job.site === "instagram"
+      ? WeiboImages.safeSegment(job.author)
+      : `${WeiboImages.safeSegment(job.author)}_${WeiboImages.safeSegment(job.userId, "unknown")}`);
   }
   const date = new Date(job.createdAt);
   const day = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
   const number = String(image.index + 1).padStart(2, "0");
-  const postId = WeiboImages.safeSegment(job.postId, "微博");
-  parts.push(`${day}_${postId}_${number}${WeiboImages.extensionFromUrl(image.url)}`);
+  const postId = WeiboImages.safeSegment(job.postId, job.site === "instagram" ? "帖子" : "微博");
+  parts.push(`${day}_${postId}_${number}${image.extension || WeiboImages.extensionFromUrl(image.url)}`);
   return parts.join("/");
 }
 
@@ -108,7 +112,7 @@ async function finishIfDone(job) {
   const done = job.images.filter(image => image.state === "complete").length;
   const skipped = job.images.filter(image => image.state === "skipped").length;
   const failed = job.images.filter(image => image.state === "failed").length + job.missing;
-  await toast(job.tabId, `微博原图下载完成：成功 ${done} 个文件${skipped ? `，跳过 ${skipped} 张屏蔽图` : ""}，失败 ${failed} 个文件。点击插件图标查看详情。`);
+  await toast(job.tabId, `${job.site === "instagram" ? "Instagram 图片" : "微博原图"}下载完成：成功 ${done} 个文件${skipped ? `，跳过 ${skipped} 张屏蔽图` : ""}，失败 ${failed} 个文件。点击插件图标查看详情。`);
 }
 
 async function pump(job) {
@@ -121,7 +125,7 @@ async function pump(job) {
     image.attempts++;
     await saveJob(job);
     try {
-      const token = `${job.id}-${image.index}-${image.attempts}`;
+      const token = `${job.id}-${image.index}-${image.kind}-${image.attempts}`;
       const blobUrl = await fetchImageBlob(image, token);
       image.blobToken = token;
       const id = await chrome.downloads.download({
@@ -132,6 +136,13 @@ async function pump(job) {
       });
       image.downloadId = id;
       image.state = "downloading";
+      if (image.site === "instagram" && image.kind === "image" && image.extension === ".webp" &&
+        !job.images.some(item => item.index === image.index && item.kind === "png")) {
+        job.images.splice(job.images.indexOf(image) + 1, 0, {
+          index: image.index, kind: "png", url: image.url, site: image.site,
+          state: "queued", attempts: 0, downloadId: null, error: ""
+        });
+      }
     } catch (error) {
       await releaseImageBlob(image.blobToken);
       image.blobToken = null;
@@ -143,38 +154,39 @@ async function pump(job) {
   await finishIfDone(job);
 }
 
-async function startDownload(tab) {
+async function startDownload(tab, site = "weibo") {
   const previous = await getJob();
   if (previous?.status === "running") {
-    await toast(tab.id, "已有一篇微博正在下载，请等待完成后再试。");
+    await toast(tab.id, "已有一篇帖子正在下载，请等待完成后再试。");
     return;
   }
   let response;
   try {
-    response = await chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_POST" });
+    response = await chrome.tabs.sendMessage(tab.id, { type: site === "instagram" ? "RESOLVE_INSTAGRAM_POST" : "RESOLVE_POST" });
   } catch {
-    await toast(tab.id, "无法读取微博页面，请刷新页面后重试。");
+    await toast(tab.id, "无法读取当前页面，请刷新页面后重试。");
     return;
   }
   if (!response?.ok) {
-    await toast(tab.id, response?.error || "无法定位这篇微博。");
+    await toast(tab.id, response?.error || "无法定位这篇帖子。");
     return;
   }
 
   const data = response.data;
   const images = data.pictures.flatMap((picture, index) => [
-    { index, kind: "image", url: picture.url },
-    ...(picture.liveUrl ? [{ index, kind: "live", url: picture.liveUrl }] : [])
+    { index, kind: "image", url: picture.url, site, width: picture.width, height: picture.height },
+    ...(picture.liveUrl ? [{ index, kind: "live", url: picture.liveUrl, site }] : [])
   ].map(file => ({ ...file, state: "queued", attempts: 0, downloadId: null, error: "" })));
   const job = {
-    id: crypto.randomUUID(), tabId: tab.id, postId: data.postId,
+    id: crypto.randomUUID(), tabId: tab.id, postId: data.postId, site,
     author: data.author, userId: data.userId, createdAt: Date.now(),
-    missing: data.missing, images, status: "running"
+    missing: data.missing, images, status: "running",
+    qualitySource: data.qualitySource, qualityWarning: data.qualityWarning
   };
   await saveJob(job);
-  await toast(tab.id, `已找到 ${data.pictures.length} 张原图和 ${images.length - data.pictures.length} 个 Live 动态文件，开始下载。${job.missing ? `另有 ${job.missing} 个文件地址不可用。` : ""}`);
+  await toast(tab.id, `已找到 ${data.pictures.length} 张${site === "instagram" ? "图片" : "原图"}${site === "instagram" ? "" : `和 ${images.length - data.pictures.length} 个 Live 动态文件`}，开始下载。${job.missing ? `另有 ${job.missing} 个文件地址不可用。` : ""}${job.qualityWarning || ""}`);
   try {
-    await setImageReferrers(images);
+    await setImageReferrers(images, site);
   } catch (error) {
     for (const image of images) {
       image.state = "failed";
@@ -242,21 +254,30 @@ async function recover() {
     }
   }
   await saveJob(job);
-  await setImageReferrers(job.images);
+  await setImageReferrers(job.images, job.site);
   await pump(job);
 }
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.removeAll().then(() => chrome.contextMenus.create({
-    id: MENU_ID,
-    title: "下载这篇微博的全部原图",
-    contexts: ["page", "image", "link"],
-    documentUrlPatterns: ["https://weibo.com/*", "https://www.weibo.com/*"]
-  }));
+  chrome.contextMenus.removeAll().then(() => {
+    chrome.contextMenus.create({
+      id: MENU_ID,
+      title: "下载这篇微博的全部原图",
+      contexts: ["page", "image", "link"],
+      documentUrlPatterns: ["https://weibo.com/*", "https://www.weibo.com/*"]
+    });
+    chrome.contextMenus.create({
+      id: INSTAGRAM_MENU_ID,
+      title: "下载这篇 Instagram 帖子的图片",
+      contexts: ["page", "image", "link"],
+      documentUrlPatterns: ["https://www.instagram.com/*"]
+    });
+  });
   runSerial(recover);
 });
 chrome.runtime.onStartup.addListener(() => runSerial(recover));
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === MENU_ID && tab?.id) runSerial(() => startDownload(tab));
+  if (info.menuItemId === INSTAGRAM_MENU_ID && tab?.id) runSerial(() => startDownload(tab, "instagram"));
 });
 chrome.downloads.onChanged.addListener(delta => runSerial(() => handleDownloadChange(delta)));

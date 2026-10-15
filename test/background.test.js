@@ -4,7 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://wx1.sinaimg.cn/large/${number}.jpg` })), blockedUrl = null) {
+function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://wx1.sinaimg.cn/large/${number}.jpg` })), blockedUrl = null, webp = false) {
   const files = name => fs.readFileSync(path.join(__dirname, "..", name), "utf8");
   const listeners = {};
   const stored = {};
@@ -22,7 +22,7 @@ function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://w
     action: { async setBadgeText() {}, async setBadgeBackgroundColor() {} },
     tabs: { async sendMessage(tabId, message) {
       messages.push(message);
-      if (message.type === "RESOLVE_POST") return { ok: true, data: {
+      if (message.type === "RESOLVE_POST" || message.type === "RESOLVE_INSTAGRAM_POST") return { ok: true, data: {
         postId: "post1", author: "博主", userId: "42", missing: 0,
         pictures
       } };
@@ -50,7 +50,8 @@ function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://w
           assert.equal(sessionRules.length, pictures.reduce((count, picture) => count + 1 + Number(Boolean(picture.liveUrl)), 0));
           if (message.url === blockedUrl) return { ok: false, blocked: true, error: "微博已屏蔽这张图片" };
           blobs.add(message.token);
-          return { ok: true, blobUrl: `blob:chrome-extension://test/${message.token}` };
+          return { ok: true, blobUrl: `blob:chrome-extension://test/${message.token}`,
+            extension: webp ? message.kind === "png" ? ".png" : ".webp" : undefined };
         }
         if (message.type === "RELEASE_IMAGE") {
           blobs.delete(message.token);
@@ -132,4 +133,33 @@ test("屏蔽占位图直接跳过，其余图片照常下载", async () => {
   await vm.runInContext("operation", app.context);
   assert.equal(app.stored.job.status, "done");
   assert.ok(app.messages.some(message => message.type === "TOAST" && message.text.includes("跳过 1 张屏蔽图")));
+});
+
+test("Instagram 使用独立菜单、目录和来源信息", async () => {
+  const app = loadBackground([{ url: "https://scontent.cdninstagram.com/photo.jpg" }]);
+  app.listeners.menuClicked({ menuItemId: "download-instagram-images" }, { id: 7 });
+  await vm.runInContext("operation", app.context);
+  assert.ok(app.messages.some(message => message.type === "RESOLVE_INSTAGRAM_POST"));
+  assert.equal(app.getSessionRules()[0].action.requestHeaders[0].value, "https://www.instagram.com/");
+  assert.match(app.started[0].filename, /^Instagram图片\/博主\/\d{8}_post1_01\.jpg$/);
+  app.listeners.downloadChanged({ id: 1, state: { current: "complete" } });
+  await vm.runInContext("operation", app.context);
+  assert.equal(app.stored.job.status, "done");
+});
+
+test("Instagram WebP 同时保存同序号 PNG，两个下载使用独立 Blob 并分别完成", async () => {
+  const app = loadBackground([{ url: "https://scontent.cdninstagram.com/photo.webp" }], null, true);
+  app.listeners.menuClicked({ menuItemId: "download-instagram-images" }, { id: 7 });
+  await vm.runInContext("operation", app.context);
+  assert.equal(app.started.length, 2);
+  assert.match(app.started[0].filename, /_01\.webp$/);
+  assert.match(app.started[1].filename, /_01\.png$/);
+  assert.notEqual(app.started[0].url, app.started[1].url);
+  for (const id of [1, 2]) {
+    app.listeners.downloadChanged({ id, state: { current: "complete" } });
+    await vm.runInContext("operation", app.context);
+  }
+  assert.equal(app.stored.job.status, "done");
+  assert.equal(app.stored.job.images.filter(image => image.state === "complete").length, 2);
+  assert.equal(app.getBlobs().size, 0);
 });

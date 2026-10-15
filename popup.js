@@ -7,7 +7,7 @@ async function render() {
   const { job } = await chrome.storage.local.get("job");
   errors.replaceChildren();
   if (!job) {
-    summary.textContent = "在微博内容上右键，选择“下载这篇微博的全部原图”。";
+    summary.textContent = "在微博或 Instagram 帖子上右键，选择对应的图片下载菜单。";
     return;
   }
   const complete = job.images.filter(image => image.state === "complete").length;
@@ -15,9 +15,14 @@ async function render() {
   const failed = job.images.filter(image => image.state === "failed").length + job.missing;
   const total = job.images.length + job.missing;
   summary.textContent = `${job.author} · ${job.status === "running" ? "下载中" : "已完成"}：${complete}/${total} 个文件成功${skipped ? `，${skipped} 张屏蔽图跳过` : ""}，${failed} 个文件失败`;
-  if (job.missing) addError(`${job.missing} 个原图或 Live 动态文件地址不可用`);
+  if (job.site === "instagram") {
+    summary.textContent += job.qualitySource === "media" ? "。画质：帖子接口最大尺寸。" : "。画质：页面最大尺寸。";
+    summary.textContent += "WebP 同时保存原文件和 PNG 副本。";
+    if (job.qualityWarning) addError(job.qualityWarning);
+  }
+  if (job.missing) addError(`${job.missing} 个图片或 Live 动态文件地址不可用`);
   for (const image of job.images.filter(item => item.state === "failed")) {
-    addError(`第 ${image.index + 1} 张${image.kind === "live" ? "的 Live 动态文件" : "的原图"}：${image.error}`);
+    addError(`第 ${image.index + 1} 张${image.kind === "png" ? "的 PNG 副本" : image.kind === "live" ? "的 Live 动态文件" : job.site === "instagram" ? "图片" : "的原图"}：${image.error}`);
   }
 }
 

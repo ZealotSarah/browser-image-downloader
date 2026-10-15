@@ -4,23 +4,26 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-function loadOffscreen(fetchResponse) {
+function loadOffscreen(fetchResponse, graphics = {}) {
   const files = name => fs.readFileSync(path.join(__dirname, "..", name), "utf8");
   let listener;
   const revoked = [];
+  const savedBlobs = [];
   class Url extends URL {}
-  Url.createObjectURL = () => "blob:chrome-extension://test/image";
+  Url.createObjectURL = blob => { savedBlobs.push(blob); return "blob:chrome-extension://test/image"; };
   Url.revokeObjectURL = url => revoked.push(url);
   const context = vm.createContext({
     URL: Url,
     AbortSignal,
+    ...graphics,
     fetch: async () => fetchResponse,
     chrome: { runtime: { onMessage: { addListener(callback) { listener = callback; } } } }
   });
   vm.runInContext(files("lib.js"), context);
+  vm.runInContext(files("instagram-lib.js"), context);
   vm.runInContext(files("offscreen.js"), context);
   const send = message => new Promise(resolve => listener({ target: "offscreen", ...message }, {}, resolve));
-  return { send, revoked };
+  return { send, revoked, savedBlobs };
 }
 
 test("仅将图片响应转为 Blob URL，任务完成后释放", async () => {
@@ -69,4 +72,62 @@ test("Live Photo 接受 MOV 响应，拒绝错误网页", async () => {
   const result = await bad.send({ type: "FETCH_IMAGE", kind: "live", token: "2", url });
   assert.equal(result.ok, false);
   assert.match(result.error, /非视频/);
+});
+
+test("Instagram CDN 图片可保存，其他站点地址被拒绝", async () => {
+  const app = loadOffscreen({
+    ok: true, headers: { get: () => "image/webp" },
+    blob: async () => new Blob(["image"], { type: "image/webp" })
+  });
+  const result = await app.send({ type: "FETCH_IMAGE", site: "instagram", kind: "image", token: "1",
+    url: "https://scontent.cdninstagram.com/photo.jpg" });
+  assert.equal(result.ok, true);
+  assert.equal(result.extension, ".webp");
+  const rejected = await app.send({ type: "FETCH_IMAGE", site: "instagram", kind: "image", token: "2",
+    url: "https://example.com/photo.jpg" });
+  assert.equal(rejected.ok, false);
+});
+
+test("同时保留 WebP 原始字节并使用相同源生成全尺寸透明 PNG", async () => {
+  const source = new Blob(["original webp bytes"], { type: "image/webp" });
+  let reads = 0;
+  let closed = false;
+  const bitmap = { width: 1440, height: 960, close() { closed = true; } };
+  const app = loadOffscreen({ ok: true, headers: { get: () => "image/webp" }, blob: async () => { reads++; return source; } }, {
+    createImageBitmap: async blob => { assert.equal(blob, source); return bitmap; },
+    OffscreenCanvas: class {
+      constructor(width, height) { assert.equal(width, 1440); assert.equal(height, 960); }
+      getContext(type) {
+        assert.equal(type, "2d");
+        return { drawImage(image, x, y) { assert.equal(image, bitmap); assert.equal(x, 0); assert.equal(y, 0); } };
+      }
+      async convertToBlob(options) { assert.equal(options.type, "image/png"); return new Blob(["png"], { type: "image/png" }); }
+    }
+  });
+  const base = { type: "FETCH_IMAGE", site: "instagram", url: "https://scontent.cdninstagram.com/photo.webp" };
+  assert.equal((await app.send({ ...base, kind: "image", token: "original" })).extension, ".webp");
+  assert.equal(app.savedBlobs[0], source);
+  assert.equal((await app.send({ ...base, kind: "png", token: "png" })).extension, ".png");
+  assert.equal(app.savedBlobs[1].type, "image/png");
+  assert.equal(reads, 1);
+  assert.equal(closed, true);
+});
+
+test("PNG 编码失败仍保留 WebP，释放解码位图并单独报告失败", async () => {
+  let closed = false;
+  const app = loadOffscreen({ ok: true, headers: { get: () => "image/webp" },
+    blob: async () => new Blob(["webp"], { type: "image/webp" }) }, {
+    createImageBitmap: async () => ({ width: 2, height: 2, close() { closed = true; } }),
+    OffscreenCanvas: class {
+      getContext() { return { drawImage() {} }; }
+      async convertToBlob() { throw new Error("PNG 编码失败"); }
+    }
+  });
+  const base = { type: "FETCH_IMAGE", site: "instagram", url: "https://scontent.cdninstagram.com/photo.webp" };
+  assert.equal((await app.send({ ...base, kind: "image", token: "original" })).ok, true);
+  const result = await app.send({ ...base, kind: "png", token: "png" });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /PNG 编码失败/);
+  assert.equal(closed, true);
+  assert.equal(app.savedBlobs.length, 1);
 });

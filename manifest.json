@@ -1,18 +1,23 @@
 {
   "manifest_version": 3,
   "minimum_chrome_version": "116",
-  "name": "微博单篇原图下载",
-  "version": "0.1.4",
-  "description": "在微博上右键下载当前微博的全部原图及 Live Photo 动态文件，并按博主分类保存。",
+  "name": "微博和 Instagram 图片下载",
+  "version": "0.2.3",
+  "description": "右键下载单篇微博的原图或 Instagram 帖子的图片，并按作者分类保存。",
   "permissions": ["contextMenus", "downloads", "storage", "offscreen", "declarativeNetRequestWithHostAccess"],
-  "host_permissions": ["https://weibo.com/*", "https://www.weibo.com/*", "https://video.weibo.com/*", "https://*.sinaimg.cn/*"],
+  "host_permissions": ["https://weibo.com/*", "https://www.weibo.com/*", "https://video.weibo.com/*", "https://*.sinaimg.cn/*", "https://www.instagram.com/*", "https://*.cdninstagram.com/*", "https://*.fbcdn.net/*"],
   "background": { "service_worker": "background.js" },
-  "action": { "default_popup": "popup.html", "default_title": "微博原图下载" },
+  "action": { "default_popup": "popup.html", "default_title": "图片下载" },
   "options_page": "options.html",
   "content_scripts": [
     {
       "matches": ["https://weibo.com/*", "https://www.weibo.com/*"],
       "js": ["lib.js", "content.js"],
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["instagram-lib.js", "instagram.js"],
       "run_at": "document_start"
     }
   ]
