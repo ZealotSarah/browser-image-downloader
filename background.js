@@ -1,8 +1,6 @@
 importScripts("lib.js", "instagram-lib.js", "video-lib.js", "x-lib.js");
 
 const MENU_ID = "download-post-media";
-const DEFAULT_SETTINGS = { instagramSubfolder: "Instagram图片", instagramVideoSubfolder: "Instagram视频",
-  xSubfolder: "X图片", xVideoSubfolder: "X视频", groupByAuthor: true };
 let operation = Promise.resolve();
 let creatingOffscreen = null;
 
@@ -86,17 +84,9 @@ async function closeOffscreen() {
   if (contexts.length) await chrome.offscreen.closeDocument();
 }
 
-function makeFilename(job, image, settings) {
-  const parts = [];
-  if (job.site === "weibo") {
-    parts.push("微博", WeiboImages.safeSegment(job.author), image.kind === "video" ? "视频" : "图片");
-  } else {
-    const subfolder = WeiboImages.normalizeSubfolder(image.kind === "video"
-      ? job.site === "x" ? settings.xVideoSubfolder : settings.instagramVideoSubfolder
-      : job.site === "x" ? settings.xSubfolder : settings.instagramSubfolder);
-    if (subfolder) parts.push(subfolder);
-    if (settings.groupByAuthor) parts.push(WeiboImages.safeSegment(job.author));
-  }
+function makeFilename(job, image) {
+  const platform = job.site === "weibo" ? "微博" : job.site === "instagram" ? "Instagram" : "X";
+  const parts = [platform, WeiboImages.safeSegment(job.author), image.kind === "video" ? "视频" : "图片"];
   const date = new Date(job.createdAt);
   const day = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, "0")}${String(date.getDate()).padStart(2, "0")}`;
   const number = String(image.index + 1).padStart(2, "0");
@@ -130,13 +120,13 @@ async function existingDownload(job, image) {
   return item?.state === "complete" && item.exists === true ? record : null;
 }
 
-async function importPreviousDownloads(previous, settings) {
+async function importPreviousDownloads(previous) {
   if (!previous) return;
   for (const image of previous.images.filter(item => item.state === "complete")) {
     let item;
     if (image.savedDownloadId != null) [item] = await chrome.downloads.search({ id: image.savedDownloadId });
     else {
-      const filename = makeFilename(previous, image, settings).split("/").pop();
+      const filename = makeFilename(previous, image).split("/").pop();
       const dot = filename.lastIndexOf(".");
       if (dot < 0) continue;
       const escape = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -174,8 +164,6 @@ async function finishIfDone(job) {
 }
 
 async function pump(job) {
-  const { settings: savedSettings } = await chrome.storage.local.get("settings");
-  const settings = { ...DEFAULT_SETTINGS, ...savedSettings };
   while (job.status === "running" && job.images.filter(image => image.state === "starting" || image.state === "downloading").length < 3) {
     const image = job.images.find(item => item.state === "queued" &&
       !(item.site === "weibo" && item.kind === "video" && job.images.some(active =>
@@ -206,7 +194,7 @@ async function pump(job) {
       }
       const id = await chrome.downloads.download({
         url: downloadUrl,
-        filename: makeFilename(job, image, settings),
+        filename: makeFilename(job, image),
         saveAs: false,
         conflictAction: "uniquify"
       });
@@ -243,8 +231,7 @@ async function startDownload(tab, site = "weibo") {
   }
 
   const data = response.data;
-  const { settings: savedSettings } = await chrome.storage.local.get("settings");
-  await importPreviousDownloads(previous, { ...DEFAULT_SETTINGS, ...savedSettings });
+  await importPreviousDownloads(previous);
   const media = [...(data.pictures || []).map(picture => ({ ...picture, kind: "image" })),
     ...(data.videos || []).map(video => ({ ...video, kind: "video" }))];
   const images = media.flatMap((picture, index) => [

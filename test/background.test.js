@@ -160,7 +160,7 @@ test("统一菜单自动识别 Instagram，使用独立目录和来源信息", a
   await vm.runInContext("operation", app.context);
   assert.ok(app.messages.some(message => message.type === "RESOLVE_MEDIA"));
   assert.equal(app.getSessionRules()[0].action.requestHeaders[0].value, "https://www.instagram.com/");
-  assert.match(app.started[0].filename, /^Instagram图片\/博主\/\d{8}_post1_01\.jpg$/);
+  assert.match(app.started[0].filename, /^Instagram\/博主\/图片\/\d{8}_post1_01\.jpg$/);
   app.listeners.downloadChanged({ id: 1, state: { current: "complete" } });
   await vm.runInContext("operation", app.context);
   assert.equal(app.stored.job.status, "done");
@@ -196,7 +196,7 @@ test("播放器统一菜单使用对应视频管线、独立目录和站点来�
     await vm.runInContext("operation", app.context);
     if (site === "weibo") assert.match(app.started[0].url, /^blob:chrome-extension:/);
     else assert.equal(app.started[0].url, url);
-    assert.match(app.started[0].filename, site === "x" ? /^X视频\/博主\/.*_01.mp4$/ : site === "weibo" ? /^微博\/博主\/视频\/.*_01.mp4$/ : /^Instagram视频\/博主\/.*_01.mp4$/);
+    assert.match(app.started[0].filename, site === "x" ? /^X\/博主\/视频\/.*_01.mp4$/ : site === "weibo" ? /^微博\/博主\/视频\/.*_01.mp4$/ : /^Instagram\/博主\/视频\/.*_01.mp4$/);
     assert.equal(app.isOffscreenOpen(), site === "weibo");
     assert.equal(app.stored.job.images[0].width, 3840);
     assert.equal(app.getSessionRules()[0].action.requestHeaders[0].value, site === "x" ? "https://x.com/" : site === "weibo" ? "https://weibo.com/" : "https://www.instagram.com/");
@@ -225,8 +225,8 @@ test("X 图片菜单复用 WebP + PNG 队列，独立作者目录和来源", asy
   await vm.runInContext("operation", app.context);
   assert.ok(app.messages.some(message => message.type === "RESOLVE_MEDIA"));
   assert.equal(app.started.length, 2);
-  assert.match(app.started[0].filename, /^X图片\/博主\/.*_01.webp$/);
-  assert.match(app.started[1].filename, /^X图片\/博主\/.*_01.png$/);
+  assert.match(app.started[0].filename, /^X\/博主\/图片\/.*_01.webp$/);
+  assert.match(app.started[1].filename, /^X\/博主\/图片\/.*_01.png$/);
   assert.equal(app.getSessionRules()[0].action.requestHeaders[0].value, "https://x.com/");
 });
 
@@ -237,9 +237,9 @@ test("统一菜单一次下载混合帖图片及视频，按文件类型选择�
   await vm.runInContext("operation", app.context);
   assert.equal(app.messages.filter(message => message.type === "RESOLVE_MEDIA").length, 1);
   assert.equal(app.started.length, 3);
-  assert.match(app.started[0].filename, /^Instagram图片\/.*_01.webp$/);
-  assert.match(app.started[1].filename, /^Instagram图片\/.*_01.png$/);
-  assert.match(app.started[2].filename, /^Instagram视频\/.*_02.mp4$/);
+  assert.match(app.started[0].filename, /^Instagram\/博主\/图片\/.*_01.webp$/);
+  assert.match(app.started[1].filename, /^Instagram\/博主\/图片\/.*_01.png$/);
+  assert.match(app.started[2].filename, /^Instagram\/博主\/视频\/.*_02.mp4$/);
   for (const id of [1, 2, 3]) {
     app.listeners.downloadChanged({ id, state: { current: "complete" } });
     await vm.runInContext("operation", app.context);
@@ -361,12 +361,14 @@ test("失败的视频不写入成功记录，再次点击会重新尝试", async
   assert.equal(app.started.length, 2);
 });
 
-test("微博固定按博主名称及媒体类型建目录，旧设置不改变新结构", () => {
+test("三站固定按平台、博主及媒体类型建目录，旧设置不改变新结构", () => {
   const app = loadBackground();
-  const filename = kind => vm.runInContext(`makeFilename({site:"weibo",author:"博主/名称",postId:"123",createdAt:0},
+  const filename = (site, kind) => vm.runInContext(`makeFilename({site:"${site}",author:"博主/名称",postId:"123",createdAt:0},
     {kind:"${kind}",index:0,url:"https://wx1.sinaimg.cn/large/a.jpg"},
     {groupByAuthor:false,downloadSubfolder:"旧图片目录",weiboVideoSubfolder:"旧视频目录"})`, app.context);
-  assert.match(filename("image"), /^微博\/博主_名称\/图片\//);
-  assert.match(filename("video"), /^微博\/博主_名称\/视频\//);
-  assert.match(filename("live"), /^微博\/博主_名称\/图片\//);
+  for (const [site, name] of [["weibo", "微博"], ["instagram", "Instagram"], ["x", "X"]]) {
+    for (const kind of ["image", "png", "live", "video"]) {
+      assert.ok(filename(site, kind).startsWith(`${name}/博主_名称/${kind === "video" ? "视频" : "图片"}/`));
+    }
+  }
 });

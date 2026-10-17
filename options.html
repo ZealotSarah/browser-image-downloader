@@ -3,30 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>图片视频下载设置</title>
+  <title>下载目录说明</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <main class="panel">
-    <h1>图片视频下载设置</h1>
-    <form id="settings-form">
-      <p class="hint">微博保存目录：微博 / 博主名称 / 图片或视频。Live Photo 动态文件随图片保存。</p>
-      <label for="instagram-subfolder">Instagram 下载子文件夹</label>
-      <input id="instagram-subfolder" type="text" maxlength="80" autocomplete="off" placeholder="Instagram图片">
-      <label for="instagram-video-subfolder">Instagram 视频子文件夹</label>
-      <input id="instagram-video-subfolder" type="text" maxlength="80" autocomplete="off" placeholder="Instagram视频">
-      <label for="x-subfolder">X 图片子文件夹</label>
-      <input id="x-subfolder" type="text" maxlength="80" autocomplete="off" placeholder="X图片">
-      <label for="x-video-subfolder">X 视频子文件夹</label>
-      <input id="x-video-subfolder" type="text" maxlength="80" autocomplete="off" placeholder="X视频">
-      <p class="hint">填写一个文件夹名称；留空则直接保存到 Chrome 下载目录。</p>
-      <label class="checkbox"><input id="group-by-author" type="checkbox"> Instagram、X 按用户名分类</label>
-      <button type="submit">保存设置</button>
-      <p id="message" role="status"></p>
-    </form>
+    <h1>下载目录说明</h1>
+    <p>文件保存在 Chrome 下载目录下，按平台、博主名称和媒体类型分类：</p>
+    <ul>
+      <li>微博 / 博主名称 / 图片或视频</li>
+      <li>Instagram / 用户名 / 图片或视频</li>
+      <li>X / 用户名 / 图片或视频</li>
+    </ul>
+    <p class="hint">WebP 原文件、PNG 副本和 Live Photo 动态文件均放在对应的图片目录。</p>
     <p class="hint">主下载目录由 Chrome 控制。如需更改磁盘位置，请前往 Chrome 的下载设置。</p>
   </main>
-  <script src="lib.js"></script>
-  <script src="options.js"></script>
 </body>
 </html>
