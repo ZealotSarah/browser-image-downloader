@@ -80,3 +80,18 @@ test("Instagram 视频链接支持 Reels、作者路径及普通帖，排除评�
   assert.equal(lib.instagramPostId("https://www.instagram.com/p/ABC/c/123/"), null);
   assert.equal(lib.instagramPostId("https://www.instagram.com/stories/author/123/"), null);
 });
+
+test("微博实际 template 宽高后带帧率等参数时仍保留签名并识别规格", () => {
+  const url = "https://f.video.weibocdn.com/o0/video.mp4?label=mp4_720p&template=1280x720.25.0&Expires=123&ssig=keep";
+  const result = lib.parseWeibo({ page_info: { media_info: { stream_url_hd: url } } });
+  assert.equal(result.missing, 0);
+  assert.equal(result.videos[0].width, 1280);
+  assert.equal(result.videos[0].height, 720);
+  assert.equal(result.videos[0].url, url);
+});
+
+test("微博播放页和 CDN HTML 地址不能作为完整视频候选", () => {
+  assert.equal(lib.videoUrl("https://video.weibo.com/show?fid=123", "weibo"), null);
+  assert.equal(lib.videoUrl("https://f.video.weibocdn.com/error.htm", "weibo"), null);
+  assert.equal(lib.videoUrl("https://weibo.com/error.html", "weibo"), null);
+});

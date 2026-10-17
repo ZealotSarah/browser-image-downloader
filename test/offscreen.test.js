@@ -21,6 +21,8 @@ function loadOffscreen(fetchResponse, graphics = {}) {
   });
   vm.runInContext(files("lib.js"), context);
   vm.runInContext(files("instagram-lib.js"), context);
+  vm.runInContext(files("video-lib.js"), context);
+  vm.runInContext(files("x-lib.js"), context);
   vm.runInContext(files("offscreen.js"), context);
   const send = message => new Promise(resolve => listener({ target: "offscreen", ...message }, {}, resolve));
   return { send, revoked, savedBlobs };
@@ -130,4 +132,38 @@ test("PNG 编码失败仍保留 WebP，释放解码位图并单独报告失败",
   assert.match(result.error, /PNG 编码失败/);
   assert.equal(closed, true);
   assert.equal(app.savedBlobs.length, 1);
+});
+
+test("X orig 图片按实际格式保存，拒绝头像及站外地址", async () => {
+  const app = loadOffscreen({ ok: true, headers: { get: () => "image/jpeg" },
+    blob: async () => new Blob(["image"], { type: "image/jpeg" }) });
+  const message = { type: "FETCH_IMAGE", site: "x", kind: "image", token: "x" };
+  const result = await app.send({ ...message, url: "https://pbs.twimg.com/media/photo?format=jpg&name=orig" });
+  assert.equal(result.ok, true);
+  assert.equal(result.extension, ".jpg");
+  assert.equal((await app.send({ ...message, url: "https://pbs.twimg.com/profile_images/avatar.jpg" })).ok, false);
+});
+
+test("微博视频在保存前验证 MIME 与 MP4 文件头，再生成 mp4 Blob", async () => {
+  const source = new Blob([new Uint8Array([0, 0, 0, 20, 102, 116, 121, 112, 105, 115, 111, 109, 0, 0, 0, 0])], { type: "video/mp4" });
+  const app = loadOffscreen({ ok: true, headers: { get: () => "video/mp4" }, blob: async () => source });
+  const result = await app.send({ type: "FETCH_IMAGE", site: "weibo", kind: "video", token: "video",
+    url: "https://f.video.weibocdn.com/video.mp4?template=1280x720.25.0" });
+  assert.equal(result.ok, true);
+  assert.equal(result.extension, ".mp4");
+  assert.equal(app.savedBlobs[0].type, "video/mp4");
+  assert.deepEqual(new Uint8Array(await app.savedBlobs[0].arrayBuffer()), new Uint8Array(await source.arrayBuffer()));
+});
+
+test("微博视频错误 HTML、伪装二进制和 403 均不生成可下载文件", async () => {
+  const message = { type: "FETCH_IMAGE", site: "weibo", kind: "video", token: "video", url: "https://f.video.weibocdn.com/video.mp4" };
+  for (const type of ["text/html", "application/octet-stream", "video/mp4"]) {
+    const app = loadOffscreen({ ok: true, headers: { get: () => type }, blob: async () => new Blob(["<html>Forbidden</html>"], { type }) });
+    const result = await app.send(message);
+    assert.equal(result.ok, false);
+    assert.match(result.error, /未保存/);
+    assert.equal(app.savedBlobs.length, 0);
+  }
+  const denied = await loadOffscreen({ ok: false, status: 403 }).send(message);
+  assert.match(denied.error, /HTTP 403.*刷新微博/);
 });

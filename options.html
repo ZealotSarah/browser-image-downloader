@@ -10,16 +10,17 @@
   <main class="panel">
     <h1>图片视频下载设置</h1>
     <form id="settings-form">
-      <label for="subfolder">微博下载子文件夹</label>
-      <input id="subfolder" type="text" maxlength="80" autocomplete="off" placeholder="微博原图">
+      <p class="hint">微博保存目录：微博 / 博主名称 / 图片或视频。Live Photo 动态文件随图片保存。</p>
       <label for="instagram-subfolder">Instagram 下载子文件夹</label>
       <input id="instagram-subfolder" type="text" maxlength="80" autocomplete="off" placeholder="Instagram图片">
-      <label for="weibo-video-subfolder">微博视频子文件夹</label>
-      <input id="weibo-video-subfolder" type="text" maxlength="80" autocomplete="off" placeholder="微博视频">
       <label for="instagram-video-subfolder">Instagram 视频子文件夹</label>
       <input id="instagram-video-subfolder" type="text" maxlength="80" autocomplete="off" placeholder="Instagram视频">
+      <label for="x-subfolder">X 图片子文件夹</label>
+      <input id="x-subfolder" type="text" maxlength="80" autocomplete="off" placeholder="X图片">
+      <label for="x-video-subfolder">X 视频子文件夹</label>
+      <input id="x-video-subfolder" type="text" maxlength="80" autocomplete="off" placeholder="X视频">
       <p class="hint">填写一个文件夹名称；留空则直接保存到 Chrome 下载目录。</p>
-      <label class="checkbox"><input id="group-by-author" type="checkbox"> 按作者分类（微博：名称和用户 ID；Instagram：用户名）</label>
+      <label class="checkbox"><input id="group-by-author" type="checkbox"> Instagram、X 按用户名分类</label>
       <button type="submit">保存设置</button>
       <p id="message" role="status"></p>
     </form>

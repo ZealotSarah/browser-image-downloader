@@ -78,6 +78,15 @@ test("混合媒体跳过视频，不接受其他站点图片", () => {
   assert.equal(result.missing, 1);
 });
 
+test("混合帖的原图地址优先于不完整 pic_ids 元数据，避免三张图全报缺失", () => {
+  const result = lib.parseStatus({ pic_ids: ["a", "b", "c"], pic_infos: {}, mix_media_info: { items: [
+    { type: "video", data: {} },
+    ...["a", "b", "c"].map(id => ({ type: "pic", data: { pic_id: id, largest: { url: `https://wx2.sinaimg.cn/large/${id}.jpg` } } }))
+  ] } });
+  assert.equal(result.pictures.length, 3);
+  assert.equal(result.missing, 0);
+});
+
 test("文件夹名称阻止路径穿越并处理非法字符", () => {
   assert.throws(() => lib.normalizeSubfolder("../other"));
   assert.throws(() => lib.normalizeSubfolder("a\\b"));

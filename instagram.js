@@ -23,8 +23,8 @@
     lastContext = card ? { card, pageUrl: location.href, time: Date.now() } : null;
   }, true);
 
-  function postIdFor(card, video = false) {
-    const parse = video ? VideoDownloads.instagramPostId : InstagramImages.postIdFromUrl;
+  function postIdFor(card) {
+    const parse = VideoDownloads.instagramPostId;
     for (const link of card.querySelectorAll('a[href]')) {
       const id = parse(link.href);
       if (id) return id;
@@ -51,13 +51,13 @@
       ));
   }
 
-  async function resolvePost(video = false) {
+  async function resolvePost() {
     const context = lastContext;
     if (!context?.card.isConnected || context.pageUrl !== location.href || Date.now() - context.time > 30000) {
       throw new Error("未找到右键所在的 Instagram 帖子，请在帖子图片上重试");
     }
     const { card } = context;
-    const postId = postIdFor(card, video);
+    const postId = postIdFor(card);
     if (!postId) throw new Error("无法确认这篇 Instagram 帖子的链接");
     let qualityWarning;
     try {
@@ -68,17 +68,16 @@
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const json = await response.json();
-      if (video) {
-        const data = VideoDownloads.parseInstagram(json, postId);
-        if (!data.videos.length && !data.missing) throw new Error("这篇 Instagram 帖子没有视频");
-        return data;
-      }
       const data = InstagramImages.parseMedia(json, postId);
-      if (!data.pictures.length && !data.missing) throw new Error("这篇 Instagram 帖子没有可下载的图片");
-      if (data.pictures.length || data.missing) return data;
+      const videos = VideoDownloads.parseInstagram(json, postId);
+      if (!data.pictures.length && !videos.videos.length && !data.missing && !videos.missing) throw new Error("这篇 Instagram 帖子没有可下载的图片或视频");
+      return { ...data, videos: videos.videos, missing: data.missing + videos.missing,
+        imageMissing: data.missing, videoMissing: videos.missing };
     } catch (error) {
-      if (video) throw new Error(`无法获取最高规格视频：${error.message}`);
-      qualityWarning = `高清帖子数据不可用（${error.message}），本次使用页面最大图，清晰度可能较低。`;
+      if (card.querySelector("video") || /\/(?:reel|reels)\//.test(location.pathname || "")) {
+        throw new Error(`无法获取最高规格视频：${error.message}`);
+      }
+      qualityWarning = `高清帖子数据不可用（${error.message}），本次仅保存页面最大图，清晰度可能较低，也无法确认是否遗漏视频。`;
     }
     const authorLink = [...card.querySelectorAll("header a[href], a[href]")].find(link =>
       /^\/[A-Za-z0-9._]+\/?$/.test(new URL(link.href).pathname));
@@ -94,7 +93,7 @@
     }
     collectPictures(card, pictures, seen);
     if (!pictures.length) throw new Error("这篇 Instagram 帖子没有可下载的图片");
-    return { postId, author, userId: author, pictures, missing: 0, qualitySource: "page", qualityWarning };
+    return { postId, author, userId: author, pictures, videos: [], missing: 0, imageMissing: 0, videoMissing: 0, qualitySource: "page", qualityWarning };
   }
 
   function toast(message) {
@@ -113,8 +112,8 @@
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "RESOLVE_INSTAGRAM_POST" || message?.type === "RESOLVE_INSTAGRAM_VIDEOS") {
-      resolvePost(message.type === "RESOLVE_INSTAGRAM_VIDEOS").then(data => sendResponse({ ok: true, data }))
+    if (message?.type === "RESOLVE_MEDIA") {
+      resolvePost().then(data => sendResponse({ ok: true, data }))
         .catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
     }

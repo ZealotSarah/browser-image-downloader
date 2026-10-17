@@ -56,18 +56,20 @@ globalThis.WeiboImages = (() => {
       pictures.push({ id: key, url, ...(liveUrl ? { liveUrl } : {}) });
     }
 
-    if (Array.isArray(source?.pic_ids) && source.pic_ids.length) {
+    const mixedPictures = (source?.mix_media_info?.items || []).filter(item =>
+      item?.type === "pic" || (!item?.type && item?.data?.object_type !== "video"));
+    if (mixedPictures.length) {
+      for (const item of mixedPictures) {
+        const id = item.data?.pic_id || item.data?.pid || item.data?.id;
+        const info = item.data?.pic_info || item.data;
+        add(id, originalUrl(info) ? info : source.pic_infos?.[id] || info);
+      }
+    } else if (Array.isArray(source?.pic_ids) && source.pic_ids.length) {
       for (const id of source.pic_ids) add(id, source.pic_infos?.[id]);
     } else if (Array.isArray(source?.pics) && source.pics.length) {
       for (const pic of source.pics) {
         if (pic?.type === "video") continue;
         add(pic?.pid, pic);
-      }
-    } else if (Array.isArray(source?.mix_media_info?.items)) {
-      for (const item of source.mix_media_info.items) {
-        if (item?.type === "video" || item?.data?.object_type === "video") continue;
-        const info = item?.data?.pic_info || item?.data;
-        add(item?.data?.id || item?.data?.pid, info);
       }
     }
 

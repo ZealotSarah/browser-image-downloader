@@ -4,9 +4,9 @@ globalThis.VideoDownloads = (() => {
     if (typeof raw !== "string") return null;
     try {
       const url = new URL(raw.replace(/^\/\//, "https://").replace(/^http:/i, "https:"));
-      const host = site === "instagram" ? /(^|\.)(cdninstagram\.com|fbcdn\.net)$/i
-        : /(^|\.)(weibocdn\.com|weibo\.com|sinaimg\.cn)$/i;
-      if (url.protocol !== "https:" || !host.test(url.hostname) || /\.(m3u8|mpd|m4s)(?:$|\/)/i.test(url.pathname)) return null;
+      const host = site === "x" ? /^video\.twimg\.com$/i : site === "instagram" ? /(^|\.)(cdninstagram\.com|fbcdn\.net)$/i
+        : /(^|\.)(weibocdn\.com|sinaimg\.cn)$/i;
+      if (url.protocol !== "https:" || !host.test(url.hostname) || /\.(m3u8|mpd|m4s|html?)(?:$|\/)/i.test(url.pathname)) return null;
       return url.href;
     } catch { return null; }
   }
@@ -65,7 +65,7 @@ globalThis.VideoDownloads = (() => {
         if (!/^stream_url|^mp4_/i.test(key) || typeof raw !== "string") continue;
         const url = videoUrl(raw, "weibo");
         if (!url) continue;
-        const dimensions = new URL(url).searchParams.get("template")?.match(/^(\d+)x(\d+)$/);
+        const dimensions = new URL(url).searchParams.get("template")?.match(/^(\d+)x(\d+)(?:\.|$)/);
         if (dimensions) candidates.push({ url, width: Number(dimensions[1]), height: Number(dimensions[2]) });
       }
       const selected = best(candidates, "weibo");
