@@ -18,7 +18,7 @@
 
 0.4.6 的三站统一目录以第 16 节为准，替代早期 Instagram、X 可配置子文件夹的行为。
 
-0.4.7 的目录层级以第 17 节为准；0.5.0 的文件剪贴板功能以第 18 节为准。
+0.4.7 的目录层级以第 17 节为准。
 
 ## 1. 目标与范围
 
@@ -229,11 +229,3 @@ Chrome 的右键菜单点击信息提供页面 URL、图片 URL 等上下文，�
 - 旧设置不影响结构，媒体身份去重保持不变；已有文件不自动迁移，仍存在的成功文件继续跳过。安装包为 `dist/browser-image-downloader-0.4.7.zip`。
 
 - 74 项自动测试通过。本机 Downloads 中 554 个微博文件及 9 个 Instagram 文件已迁移，逐文件 SHA-256 校验通过；无 X 文件。迁移清单：C:/Users/neuqsoft/Downloads/媒体帖子目录迁移_20261026_141611.json。旧空目录保留。外部迁移后 Chrome 旧下载记录可能失效，后续可能重新下载。
-
-## 18. Windows 批量文件剪贴板（0.5.0）
-
-- 弹窗针对最近下载任务提供“复制全部原图”和“复制全部视频”。下载中或没有所选类型时禁用；只选 kind=image 或 kind=video，避免 PNG 和 Live 动态副本重复发送。
-- 后台仅接受本扩展 popup.html 发出的消息，检查任务 ID、完成状态、缺失地址及每个文件的 Chrome 下载记录。必须全部完成且仍存在，才向本机组件发送路径列表；任何错误不复制部分结果，不改下载队列或保存结构。
-- 使用 nativeMessaging 权限，通过 com.browser_image_downloader.clipboard 调用 Windows .NET Framework 小助手。小助手只接受 manifest 授权扩展来源及 ping/copyFiles 操作；验证本机磁盘路径、媒体扩展名和实际存在性，拒绝网络共享、非媒体和不完整文件列表，去重后以 STA Clipboard.SetFileDropList 写入持久文件剪贴板。剪贴板占用时短暂重试，错误回传弹窗。
-- native/install.ps1 以当前用户身份编译 ClipboardHost.exe，在 LocalAppData/BrowserImageDownloader/ClipboardHost 写入组件和 host.json，并注册 HKCU 下的 Chrome NativeMessagingHosts。授权 ID 由安装参数明确指定，说明页动态显示当前 ID；不申请管理员权限，不常驻后台，不访问网络，不自动发送聊天消息。
-- 80 项扩展自动测试通过；native/test.ps1 的 10 项真实本机通信与剪贴板检查通过，测试后恢复原剪贴板。QQ／微信内的粘贴展示和发送效果未进行端到端实测。安装包：dist/browser-image-downloader-0.5.0.zip。

@@ -103,40 +103,6 @@ function mediaKey(job, image) {
     image.width || 0, image.height || 0, image.fps || 0, image.bitrate || 0]);
 }
 
-async function copyPostFiles(kind, jobId) {
-  if (!["image", "video"].includes(kind)) throw new Error("复制类型无效");
-  const job = await getJob();
-  if (!job || job.id !== jobId) throw new Error("帖子任务已改变，请重新打开插件");
-  if (job.status === "running") throw new Error("请等待下载完成后再复制");
-  const files = job.images.filter(image => image.kind === kind);
-  const missing = kind === "image" ? job.imageMissing : job.videoMissing;
-  if (missing || (job.missing && job.imageMissing == null && job.videoMissing == null)) {
-    throw new Error("部分媒体地址未解析，请重新下载帖子后再复制");
-  }
-  if (!files.length) throw new Error(kind === "image" ? "这篇帖子没有原图" : "这篇帖子没有视频");
-  const paths = [];
-  for (const file of files) {
-    if (!["complete", "existing"].includes(file.state) || file.savedDownloadId == null) {
-      throw new Error("部分文件未成功下载，请重新下载帖子后再复制");
-    }
-    const [item] = await chrome.downloads.search({ id: file.savedDownloadId });
-    if (item?.state !== "complete" || item.exists !== true || !item.filename) {
-      throw new Error("文件已删除或移动，请重新下载帖子后再复制");
-    }
-    paths.push(item.filename);
-  }
-  let result;
-  try {
-    result = await chrome.runtime.sendNativeMessage("com.browser_image_downloader.clipboard", {
-      action: "copyFiles", paths: [...new Set(paths)]
-    });
-  } catch {
-    throw new Error("无法连接本机小助手，请到下载目录说明页按指引安装或重新安装");
-  }
-  if (!result?.ok) throw new Error(result?.error || "复制文件失败");
-  return { ok: true, count: result.count };
-}
-
 async function rememberDownload(job, image, id) {
   const { completedMedia = {} } = await chrome.storage.local.get("completedMedia");
   const key = mediaKey(job, image);
@@ -379,10 +345,3 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (site) runSerial(() => startDownload(tab, site));
 });
 chrome.downloads.onChanged.addListener(delta => runSerial(() => handleDownloadChange(delta)));
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== "COPY_POST_FILES" || sender.id !== chrome.runtime.id ||
-    sender.url !== chrome.runtime.getURL("popup.html")) return false;
-  copyPostFiles(message.kind, message.jobId).then(sendResponse,
-    error => sendResponse({ ok: false, error: error.message }));
-  return true;
-});

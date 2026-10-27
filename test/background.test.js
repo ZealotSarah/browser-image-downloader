@@ -11,7 +11,6 @@ function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://w
   const started = [];
   const messages = [];
   const menus = [];
-  const nativeMessages = [];
   const downloadItems = new Map();
   let sessionRules = [];
   let offscreenOpen = false;
@@ -63,11 +62,6 @@ function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://w
     },
     runtime: {
       id: "test-extension",
-      async sendNativeMessage(host, message) {
-        nativeMessages.push({ host, message });
-        return { ok: true, count: message.paths.length };
-      },
-      onMessage: { addListener(callback) { listeners.runtimeMessage = callback; } },
       getURL(name) { return `chrome-extension://test/${name}`; },
       async getContexts() { return offscreenOpen ? [{}] : []; },
       async sendMessage(message) {
@@ -94,7 +88,7 @@ function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://w
   const context = vm.createContext({ chrome, URL, crypto: { randomUUID: () => "job1" }, console });
   context.importScripts = (...names) => names.forEach(name => vm.runInContext(files(name), context));
   vm.runInContext(files("background.js"), context);
-  return { context, chrome, listeners, stored, started, messages, menus, nativeMessages, downloadItems, getSessionRules: () => sessionRules, getBlobs: () => blobs, isOffscreenOpen: () => offscreenOpen };
+  return { context, listeners, stored, started, messages, menus, downloadItems, getSessionRules: () => sessionRules, getBlobs: () => blobs, isOffscreenOpen: () => offscreenOpen };
 }
 
 test("一次只启动三张图片，完成后补位并汇总结果", async () => {
@@ -378,83 +372,4 @@ test("三站固定按平台、媒体类型、博主及帖子建目录，旧设�
       assert.ok(filename(site, kind, "456/789").startsWith(`${name}/${kind === "video" ? "视频" : "图片"}/博主_名称/456_789/`));
     }
   }
-});
-
-async function finishCopyJob(app) {
-  app.listeners.menuClicked({ menuItemId: "download-post-media" }, { id: 7, url: "https://weibo.com/42/ABC" });
-  await vm.runInContext("operation", app.context);
-  while (app.stored.job.status === "running") {
-    const active = app.stored.job.images.filter(image => image.state === "downloading");
-    assert.ok(active.length);
-    for (const image of active) {
-      app.listeners.downloadChanged({ id: image.downloadId, state: { current: "complete" } });
-      await vm.runInContext("operation", app.context);
-    }
-  }
-}
-
-test("批量复制原图使用已验证的下载文件路径，排除 Live 动态及 PNG 副本", async () => {
-  const app = loadBackground([{ url: "https://wx1.sinaimg.cn/large/a.jpg", liveUrl: "https://video.weibo.com/a.mov" },
-    { url: "https://wx1.sinaimg.cn/large/b.jpg" }]);
-  await finishCopyJob(app);
-  const original = app.stored.job.images.find(file => file.kind === "image");
-  app.stored.job.images.push({ ...original, kind: "png" });
-  const result = await vm.runInContext('copyPostFiles("image", "job1")', app.context);
-  assert.equal(result.count, 2);
-  assert.equal(app.nativeMessages[0].host, "com.browser_image_downloader.clipboard");
-  assert.deepEqual(Array.from(app.nativeMessages[0].message.paths), app.stored.job.images
-    .filter(file => file.kind === "image").map(file => app.downloadItems.get(file.savedDownloadId).filename));
-});
-
-test("复制视频只传视频文件，已有跳过的文件也可复制", async () => {
-  const app = loadBackground([{ url: "https://wx1.sinaimg.cn/large/a.jpg" }], null, false,
-    [{ url: "https://f.video.weibocdn.com/a.mp4", width: 1920, height: 1080 }]);
-  await finishCopyJob(app);
-  const video = app.stored.job.images.find(file => file.kind === "video");
-  video.state = "existing";
-  const result = await vm.runInContext('copyPostFiles("video", "job1")', app.context);
-  assert.equal(result.count, 1);
-  assert.deepEqual(Array.from(app.nativeMessages[0].message.paths), [app.downloadItems.get(video.savedDownloadId).filename]);
-});
-
-test("下载未完成、任务改变或无该类型媒体时不改剪贴板", async () => {
-  const app = loadBackground();
-  app.listeners.menuClicked({ menuItemId: "download-post-media" }, { id: 7, url: "https://weibo.com/42/ABC" });
-  await vm.runInContext("operation", app.context);
-  await assert.rejects(vm.runInContext('copyPostFiles("image", "job1")', app.context), /等待下载完成/);
-  await assert.rejects(vm.runInContext('copyPostFiles("image", "other")', app.context), /任务已改变/);
-  app.stored.job.status = "done";
-  await assert.rejects(vm.runInContext('copyPostFiles("video", "job1")', app.context), /没有视频/);
-  assert.equal(app.nativeMessages.length, 0);
-});
-
-test("缺失地址、失败、删除及移动的文件阻止全部复制，不悄悄复制部分文件", async () => {
-  const app = loadBackground();
-  await finishCopyJob(app);
-  app.stored.job.imageMissing = 1;
-  await assert.rejects(vm.runInContext('copyPostFiles("image", "job1")', app.context), /地址未解析/);
-  app.stored.job.imageMissing = 0;
-  const file = app.stored.job.images[1];
-  file.state = "failed";
-  await assert.rejects(vm.runInContext('copyPostFiles("image", "job1")', app.context), /未成功下载/);
-  file.state = "complete";
-  app.downloadItems.get(file.savedDownloadId).exists = false;
-  await assert.rejects(vm.runInContext('copyPostFiles("image", "job1")', app.context), /删除或移动/);
-  assert.equal(app.nativeMessages.length, 0);
-});
-
-test("小助手未安装或返回错误时显示明确提示", async () => {
-  const app = loadBackground();
-  await finishCopyJob(app);
-  app.chrome.runtime.sendNativeMessage = async () => { throw new Error("not found"); };
-  await assert.rejects(vm.runInContext('copyPostFiles("image", "job1")', app.context), /安装或重新安装/);
-  app.chrome.runtime.sendNativeMessage = async () => ({ ok: false, error: "剪贴板被占用" });
-  await assert.rejects(vm.runInContext('copyPostFiles("image", "job1")', app.context), /剪贴板被占用/);
-});
-
-test("复制消息仅接受本扩展弹窗发起的请求", () => {
-  const app = loadBackground();
-  const message = { type: "COPY_POST_FILES", kind: "image", jobId: "job1" };
-  assert.equal(app.listeners.runtimeMessage(message, { id: "other", url: app.chrome.runtime.getURL("popup.html") }, () => {}), false);
-  assert.equal(app.listeners.runtimeMessage(message, { id: app.chrome.runtime.id, url: "https://weibo.com/" }, () => {}), false);
 });
