@@ -9,14 +9,20 @@
 <body>
   <main class="panel">
     <h1>下载目录说明</h1>
-    <p>文件保存在 Chrome 下载目录下，按平台、博主名称和媒体类型分类：</p>
+    <p>文件保存在 Chrome 下载目录下，按平台、媒体类型、博主名称和帖子分类：</p>
     <ul>
-      <li>微博 / 博主名称 / 图片或视频</li>
-      <li>Instagram / 用户名 / 图片或视频</li>
-      <li>X / 用户名 / 图片或视频</li>
+      <li>微博 / 图片或视频 / 博主名称 / 帖子ID</li>
+      <li>Instagram / 图片或视频 / 用户名 / 帖子ID</li>
+      <li>X / 图片或视频 / 用户名 / 帖子ID</li>
     </ul>
     <p class="hint">WebP 原文件、PNG 副本和 Live Photo 动态文件均放在对应的图片目录。</p>
     <p class="hint">主下载目录由 Chrome 控制。如需更改磁盘位置，请前往 Chrome 的下载设置。</p>
+    <h2>复制文件到 QQ／微信</h2>
+    <p>先下载帖子，完成后打开插件弹窗，点击“复制全部原图”或“复制全部视频”，再到 Windows 版 QQ／微信群聊按 Ctrl+V，确认后发送。原图不重复复制 PNG 副本及 Live Photo 动态文件。</p>
+    <p>首次使用：打开安装包或项目的 native 文件夹，在该文件夹打开 PowerShell，运行下方命令。只需安装一次，不需要管理员权限。</p>
+    <pre id="install-command"></pre>
+    <p class="hint">安装脚本会在当前用户的 LocalAppData 下编译并安装小助手，注册 Chrome 本机通信组件。更换扩展 ID 后需重新安装。群聊是否以图片、视频或文件形式展示由 QQ／微信决定；原文件不会转码或压缩。</p>
   </main>
+  <script src="options.js"></script>
 </body>
 </html>

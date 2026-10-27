@@ -9,6 +9,9 @@ input[type="text"] { box-sizing: border-box; width: 100%; padding: 9px 11px; bor
 .hint { color: #666; font-size: 13px; margin: 6px 0 16px; }
 button { border: 0; border-radius: 6px; background: #d84b28; color: white; padding: 9px 16px; font: inherit; cursor: pointer; }
 button:hover { background: #b63b1b; }
+button:disabled { opacity: .5; cursor: default; }
+#copy-images, #copy-videos { margin-bottom: 8px; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 #message { min-height: 1.5em; }
 .success { color: #207c46; }
 .error { color: #bb352c; }

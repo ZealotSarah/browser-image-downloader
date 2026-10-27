@@ -1,10 +1,37 @@
 const summary = document.getElementById("summary");
 const errors = document.getElementById("errors");
+const copyImages = document.getElementById("copy-images");
+const copyVideos = document.getElementById("copy-videos");
+const copyStatus = document.getElementById("copy-status");
+let currentJobId = null;
+let copying = false;
+
+async function copyFiles(kind) {
+  copying = true;
+  copyImages.disabled = copyVideos.disabled = true;
+  copyStatus.textContent = "正在复制文件…";
+  try {
+    const result = await chrome.runtime.sendMessage({ type: "COPY_POST_FILES", kind, jobId: currentJobId });
+    if (!result?.ok) throw new Error(result?.error || "复制失败，请重新打开插件重试");
+    copyStatus.textContent = `已复制 ${result.count} 个文件，到 QQ／微信群聊按 Ctrl+V 粘贴，再确认发送。`;
+  } catch (error) {
+    copyStatus.textContent = error.message;
+  } finally {
+    copying = false;
+    await render();
+  }
+}
+
+copyImages.addEventListener("click", () => copyFiles("image"));
+copyVideos.addEventListener("click", () => copyFiles("video"));
 
 document.getElementById("open-options").addEventListener("click", () => chrome.runtime.openOptionsPage());
 
 async function render() {
   const { job } = await chrome.storage.local.get("job");
+  currentJobId = job?.id || null;
+  copyImages.disabled = copying || !job || job.status === "running" || !job.images.some(image => image.kind === "image");
+  copyVideos.disabled = copying || !job || job.status === "running" || !job.images.some(image => image.kind === "video");
   errors.replaceChildren();
   if (!job) {
     summary.textContent = "在微博、Instagram 或 X 帖子上右键，选择“下载这篇帖子的图片和视频”，自动识别并保存。";
