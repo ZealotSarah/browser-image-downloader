@@ -33,7 +33,10 @@ async function toast(tabId, text) {
 
 async function setImageReferrers(images, site = "weibo") {
   const existing = await chrome.declarativeNetRequest.getSessionRules();
-  const urls = [...new Set(images.map(image => image.url))];
+  const urls = [...new Set(images.flatMap(image => {
+    const alternate = site === "weibo" && image.kind === "image" && WeiboImages.alternateImageUrl(image.url);
+    return alternate ? [image.url, alternate] : [image.url];
+  }))];
   await chrome.declarativeNetRequest.updateSessionRules({
     removeRuleIds: existing.map(rule => rule.id),
     addRules: urls.map((url, index) => ({
@@ -43,7 +46,11 @@ async function setImageReferrers(images, site = "weibo") {
         type: "modifyHeaders",
         requestHeaders: [{ header: "referer", operation: "set", value: site === "x" ? "https://x.com/" : site === "instagram" ? "https://www.instagram.com/" : "https://weibo.com/" }]
       },
-      condition: { urlFilter: `|${url}|`, requestMethods: ["get"] }
+      condition: {
+        urlFilter: `|${url}|`,
+        requestMethods: ["get"],
+        resourceTypes: ["xmlhttprequest", "image", "media", "other", "main_frame"]
+      }
     }))
   });
 }
@@ -67,6 +74,7 @@ async function fetchImageBlob(image, token) {
   if (!response?.ok) {
     const error = new Error(response?.error || "无法获取媒体文件");
     error.blocked = Boolean(response?.blocked);
+    error.networkError = Boolean(response?.networkError);
     throw error;
   }
   image.extension = response.extension;
@@ -191,7 +199,16 @@ async function pump(job) {
         image.extension = ".mp4";
       } else {
         image.blobToken = token;
-        downloadUrl = await fetchImageBlob(image, token);
+        image.directImage = false;
+        try {
+          downloadUrl = await fetchImageBlob(image, token);
+        } catch (error) {
+          if (image.site !== "weibo" || image.kind !== "image" || !error.networkError) throw error;
+          downloadUrl = WeiboImages.imageUrl(image.url);
+          if (!downloadUrl) throw error;
+          image.blobToken = null;
+          image.directImage = true;
+        }
       }
       const id = await chrome.downloads.download({
         url: downloadUrl,
@@ -261,6 +278,14 @@ async function startDownload(tab, site = "weibo") {
   await pump(job);
 }
 
+function invalidDownload(image, item) {
+  const mime = item?.mime || "";
+  return /^(text\/html|application\/json)/i.test(mime) ||
+    (image.kind === "video" && !/^(video\/mp4|application\/octet-stream)(?:;|$)/i.test(mime)) ||
+    (image.directImage && (!/^image\//i.test(mime) ||
+      /\/images\/default_d_h_large\.gif(?:[?#]|$)/i.test(item?.finalUrl || "")));
+}
+
 async function handleDownloadChange(delta) {
   const state = delta.state?.current;
   if (state !== "complete" && state !== "interrupted") return;
@@ -271,8 +296,7 @@ async function handleDownloadChange(delta) {
 
   if (state === "complete") {
     const [item] = await chrome.downloads.search({ id: delta.id });
-    if (/^(text\/html|application\/json)/i.test(item?.mime || "") ||
-      (image.kind === "video" && !/^(video\/mp4|application\/octet-stream)(?:;|$)/i.test(item?.mime || ""))) {
+    if (invalidDownload(image, item)) {
       try { await chrome.downloads.removeFile(delta.id); } catch { /* May already be gone. */ }
       image.state = "failed";
       image.error = image.kind === "video" ? "视频地址未返回完整 MP4 文件（可能为错误页、音频或分片流）" : "原图链接返回了网页或错误信息";
@@ -310,7 +334,14 @@ async function recover() {
         image.state = "failed";
         image.error = item?.error || "下载已中断";
       } else if (item.state === "complete") {
-        image.state = "complete";
+        if (image.directImage && invalidDownload(image, item)) {
+          try { await chrome.downloads.removeFile(image.downloadId); } catch { /* May already be gone. */ }
+          image.state = "failed";
+          image.error = "原图链接返回了非图片内容或屏蔽占位图";
+        } else {
+          image.state = "complete";
+          if (image.directImage) await rememberDownload(job, image, item.id);
+        }
       }
       if (image.state !== "downloading") {
         await releaseImageBlob(image.blobToken);

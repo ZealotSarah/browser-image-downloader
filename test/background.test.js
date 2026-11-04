@@ -31,7 +31,6 @@ function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://w
     } },
     downloads: {
       async download(options) {
-        if (!videoData) assert.match(options.url, /^blob:chrome-extension:/);
         started.push(options);
         const id = nextId++;
         downloadItems.set(id, { id, state: "in_progress", exists: true, byExtensionId: "test-extension",
@@ -66,8 +65,9 @@ function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://w
       async getContexts() { return offscreenOpen ? [{}] : []; },
       async sendMessage(message) {
         if (message.type === "FETCH_IMAGE") {
-          assert.equal(sessionRules.length, pictures.reduce((count, picture) => count + 1 + Number(Boolean(picture.liveUrl)), 0) + (videoData?.length || 0));
+          assert.ok(sessionRules.some(rule => rule.condition.urlFilter === `|${message.url}|`));
           if (message.url === blockedUrl) return { ok: false, blocked: true, error: "微博已屏蔽这张图片" };
+          if (message.url.endsWith("/network-error.jpg")) return { ok: false, networkError: true, error: "Failed to fetch" };
           blobs.add(message.token);
           return { ok: true, blobUrl: `blob:chrome-extension://test/${message.token}`,
             extension: webp ? message.kind === "png" ? ".png" : ".webp" : undefined };
@@ -90,6 +90,24 @@ function loadBackground(pictures = [1, 2, 3, 4].map(number => ({ url: `https://w
   vm.runInContext(files("background.js"), context);
   return { context, listeners, stored, started, messages, menus, downloadItems, getSessionRules: () => sessionRules, getBlobs: () => blobs, isOffscreenOpen: () => offscreenOpen };
 }
+
+test("原图请求网络失败后走 Chrome 下载，并拒绝非图片结果", async () => {
+  const url = "https://wx2.sinaimg.cn/large/network-error.jpg";
+  for (const mime of ["image/jpeg", "text/html"]) {
+    const app = loadBackground([{ url }]);
+    app.listeners.menuClicked({ menuItemId: "download-post-media" }, { id: 7, url: "https://weibo.com/42/ABC" });
+    await vm.runInContext("operation", app.context);
+    assert.equal(app.started[0].url, url);
+    const rule = app.getSessionRules().find(rule => rule.condition.urlFilter === `|${url}|`);
+    assert.ok(rule.condition.resourceTypes.includes("main_frame"));
+    assert.equal(rule.action.requestHeaders[0].value, "https://weibo.com/");
+    app.downloadItems.get(1).mime = mime;
+    app.listeners.downloadChanged({ id: 1, state: { current: "complete" } });
+    await vm.runInContext("operation", app.context);
+    assert.equal(app.stored.job.images[0].state, mime === "image/jpeg" ? "complete" : "failed");
+    assert.equal(app.downloadItems.get(1).exists, mime === "image/jpeg");
+  }
+});
 
 test("一次只启动三张图片，完成后补位并汇总结果", async () => {
   const app = loadBackground();

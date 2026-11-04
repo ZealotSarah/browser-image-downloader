@@ -130,5 +130,12 @@ globalThis.WeiboImages = (() => {
     }
   }
 
-  return { imageUrl, originalUrl, livePhotoUrl, parseStatus, safeSegment, normalizeSubfolder, extensionFromUrl, postIdFromUrl };
+  function alternateImageUrl(raw) {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" || !/^wx[2-4]\.sinaimg\.cn$/.test(url.hostname) || !url.pathname.startsWith("/large/")) return null;
+    url.hostname = "wx1.sinaimg.cn";
+    return url.href;
+  }
+
+  return { imageUrl, alternateImageUrl, originalUrl, livePhotoUrl, parseStatus, safeSegment, normalizeSubfolder, extensionFromUrl, postIdFromUrl };
 })();

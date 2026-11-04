@@ -15,8 +15,9 @@ function loadOffscreen(fetchResponse, graphics = {}) {
   const context = vm.createContext({
     URL: Url,
     AbortSignal,
+    Blob,
     ...graphics,
-    fetch: async () => fetchResponse,
+    fetch: typeof fetchResponse === "function" ? fetchResponse : async () => fetchResponse,
     chrome: { runtime: { onMessage: { addListener(callback) { listener = callback; } } } }
   });
   vm.runInContext(files("lib.js"), context);
@@ -38,6 +39,48 @@ test("仅将图片响应转为 Blob URL，任务完成后释放", async () => {
   assert.equal(result.blobUrl, "blob:chrome-extension://test/image");
   await app.send({ type: "RELEASE_IMAGE", token: "1" });
   assert.deepEqual(app.revoked, ["blob:chrome-extension://test/image"]);
+});
+
+test("微博原图节点网络失败时，备用节点保留原图路径和查询参数", async () => {
+  const urls = [];
+  const app = loadOffscreen(async (url, options) => {
+    assert.equal(options.cache, "no-store");
+    urls.push(url);
+    if (urls.length === 1) throw new TypeError("Failed to fetch");
+    return { ok: true, headers: { get: () => "image/jpeg" }, blob: async () => new Blob(["image"]) };
+  });
+  const url = "https://wx2.sinaimg.cn/large/a.jpg?test=1";
+  const result = await app.send({ type: "FETCH_IMAGE", kind: "image", site: "weibo", token: "1", url });
+  assert.equal(result.ok, true);
+  assert.deepEqual(urls, [url, "https://wx1.sinaimg.cn/large/a.jpg?test=1"]);
+});
+
+test("微博大图读取中断后按范围拼接，拒绝错位分段", async () => {
+  const url = "https://wx2.sinaimg.cn/large/a.jpg";
+  const firstSize = 4 * 1024 * 1024;
+  for (const wrongRange of [false, true]) {
+    const ranges = [];
+    const app = loadOffscreen(async (_url, options) => {
+      const range = options.headers?.Range;
+      const headers = { "content-type": "image/jpeg", etag: '"original"' };
+      if (!range) return { ok: true, status: 200, url,
+        headers: { get: key => key === "content-length" ? String(firstSize + 1) : headers[key] },
+        blob: async () => { throw new TypeError("Failed to fetch"); } };
+      ranges.push(range);
+      assert.equal(options.headers["If-Range"], '"original"');
+      const last = ranges.length === 2;
+      headers["content-range"] = last
+        ? `bytes ${wrongRange ? 0 : firstSize}-${firstSize}/${firstSize + 1}`
+        : `bytes 0-${firstSize - 1}/${firstSize + 1}`;
+      return { status: 206, headers: { get: key => headers[key] },
+        blob: async () => new Blob([last ? "x" : new Uint8Array(firstSize)]) };
+    });
+    const result = await app.send({ type: "FETCH_IMAGE", kind: "image", site: "weibo", token: "1", url });
+    assert.deepEqual(ranges, [`bytes=0-${firstSize - 1}`, `bytes=${firstSize}-${firstSize}`]);
+    assert.equal(result.ok, !wrongRange);
+    if (wrongRange) assert.equal(app.savedBlobs.length, 0);
+    else assert.equal(app.savedBlobs[0].size, firstSize + 1);
+  }
 });
 
 test("拒绝图片站返回的 HTML 错误页", async () => {

@@ -1,6 +1,28 @@
 const blobUrls = new Map();
 const webpSources = new Map();
 
+async function readImageRanges(url, options, response, type, size) {
+  const chunkSize = 4 * 1024 * 1024;
+  const etag = response.headers.get("etag");
+  const chunks = [];
+  for (let start = 0; start < size; start += chunkSize) {
+    const end = Math.min(start + chunkSize, size) - 1;
+    const part = await fetch(url, { ...options, headers: {
+      Range: `bytes=${start}-${end}`,
+      ...(etag && !etag.startsWith("W/") ? { "If-Range": etag } : {})
+    } });
+    if (part.status !== 206 || part.headers.get("content-range") !== `bytes ${start}-${end}/${size}` ||
+      part.headers.get("content-type") !== type || (etag && part.headers.get("etag") !== etag)) {
+      await part.body?.cancel();
+      throw new Error("微博原图分段响应不匹配，无法保存完整图片");
+    }
+    const chunk = await part.blob();
+    if (chunk.size !== end - start + 1) throw new Error("微博原图分段读取不完整");
+    chunks.push(chunk);
+  }
+  return new Blob(chunks, { type });
+}
+
 async function toPng(blob) {
   const bitmap = await createImageBitmap(blob);
   try {
@@ -24,6 +46,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === "FETCH_IMAGE") {
+    let signal;
     (async () => {
       const live = message.kind === "live";
       const video = message.kind === "video";
@@ -34,8 +57,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       let blob = message.kind === "png" ? webpSources.get(url) : null;
       let type = blob?.type || "";
       if (!blob) {
-        const response = await fetch(url, { signal: AbortSignal.timeout(video ? 180000 : 25000),
-          ...(video ? { credentials: "include" } : {}) });
+        signal = AbortSignal.timeout(video || message.site === "weibo" ? 180000 : 25000);
+        const weiboImage = message.site === "weibo" && message.kind === "image";
+        const options = { signal,
+          ...(video ? { credentials: "include" } : {}),
+          ...(weiboImage ? { cache: "no-store" } : {}) };
+        const response = await fetch(url, options).catch(error => {
+          const alternate = weiboImage && WeiboImages.alternateImageUrl(url);
+          if (!alternate || signal.aborted || error.name !== "TypeError") throw error;
+          return fetch(alternate, options);
+        });
         const finalUrl = !live && message.site !== "instagram" && WeiboImages.imageUrl(response.url);
         if (finalUrl && new URL(finalUrl).pathname === "/images/default_d_h_large.gif") {
           sendResponse({ ok: false, blocked: true, error: "微博已屏蔽这张图片" });
@@ -48,7 +79,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           : !type.toLowerCase().startsWith("image/")) {
           throw new Error(video ? `视频地址返回了非 MP4 内容（${type || "未知类型"}），未保存；请刷新微博后重试` : live ? "动态文件地址返回了非视频内容" : "图片站返回了非图片内容");
         }
-        blob = await response.blob();
+        try {
+          blob = await response.blob();
+        } catch (error) {
+          const size = Number(response.headers.get("content-length"));
+          if (!weiboImage || error.name !== "TypeError" || signal.aborted || response.status !== 200 ||
+            !Number.isSafeInteger(size) || size <= 4 * 1024 * 1024) throw error;
+          const rangeUrl = WeiboImages.imageUrl(response.url);
+          if (!rangeUrl) throw error;
+          blob = await readImageRanges(rangeUrl, options, response, type, size);
+        }
         if (video) {
           const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
           if (header.length < 12 || String.fromCharCode(...header.slice(4, 8)) !== "ftyp") {
@@ -72,7 +112,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       blobUrls.set(message.token, blobUrl);
       const extension = /^image\/(jpeg|png|webp|gif|avif|bmp)/i.exec(type)?.[1];
       sendResponse({ ok: true, blobUrl, extension: video ? ".mp4" : extension ? `.${extension.replace("jpeg", "jpg")}` : "" });
-    })().catch(error => sendResponse({ ok: false, error: error.message }));
+    })().catch(error => sendResponse({
+      ok: false,
+      networkError: error.name === "TypeError" && !signal?.aborted && error.message === "Failed to fetch",
+      error: signal?.aborted ? "媒体文件读取超时，请检查网络后重试" : error.message
+    }));
     return true;
   }
   return false;
