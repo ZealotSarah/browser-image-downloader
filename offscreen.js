@@ -1,7 +1,7 @@
 const blobUrls = new Map();
 const webpSources = new Map();
 
-async function readImageRanges(url, options, response, type, size) {
+async function readMediaRanges(url, options, response, type, size) {
   const chunkSize = 4 * 1024 * 1024;
   const etag = response.headers.get("etag");
   const chunks = [];
@@ -14,10 +14,10 @@ async function readImageRanges(url, options, response, type, size) {
     if (part.status !== 206 || part.headers.get("content-range") !== `bytes ${start}-${end}/${size}` ||
       part.headers.get("content-type") !== type || (etag && part.headers.get("etag") !== etag)) {
       await part.body?.cancel();
-      throw new Error("微博原图分段响应不匹配，无法保存完整图片");
+      throw new Error("微博媒体分段响应不匹配，无法保存完整文件");
     }
     const chunk = await part.blob();
-    if (chunk.size !== end - start + 1) throw new Error("微博原图分段读取不完整");
+    if (chunk.size !== end - start + 1) throw new Error("微博媒体分段读取不完整");
     chunks.push(chunk);
   }
   return new Blob(chunks, { type });
@@ -61,7 +61,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const weiboImage = message.site === "weibo" && message.kind === "image";
         const options = { signal,
           ...(video ? { credentials: "include" } : {}),
-          ...(weiboImage ? { cache: "no-store" } : {}) };
+          ...(message.site === "weibo" && (weiboImage || video) ? { cache: "no-store" } : {}) };
         const response = await fetch(url, options).catch(error => {
           const alternate = weiboImage && WeiboImages.alternateImageUrl(url);
           if (!alternate || signal.aborted || error.name !== "TypeError") throw error;
@@ -83,11 +83,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           blob = await response.blob();
         } catch (error) {
           const size = Number(response.headers.get("content-length"));
-          if (!weiboImage || error.name !== "TypeError" || signal.aborted || response.status !== 200 ||
+          if (!(weiboImage || (video && message.site === "weibo")) || error.name !== "TypeError" || signal.aborted || response.status !== 200 ||
             !Number.isSafeInteger(size) || size <= 4 * 1024 * 1024) throw error;
-          const rangeUrl = WeiboImages.imageUrl(response.url);
+          const rangeUrl = video ? VideoDownloads.videoUrl(response.url, message.site) : WeiboImages.imageUrl(response.url);
           if (!rangeUrl) throw error;
-          blob = await readImageRanges(rangeUrl, options, response, type, size);
+          blob = await readMediaRanges(rangeUrl, options, response, type, size);
         }
         if (video) {
           const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer());

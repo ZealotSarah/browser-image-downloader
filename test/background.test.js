@@ -391,3 +391,24 @@ test("三站固定按平台、媒体类型、博主及帖子建目录，旧设�
     }
   }
 });
+
+test("下载期间新帖排队，完成后自动执行已捕获的媒体且不覆盖当前任务", async () => {
+  const pictures = [{ url: "https://wx1.sinaimg.cn/large/first.jpg" }];
+  const app = loadBackground(pictures);
+  const click = () => app.listeners.menuClicked({ menuItemId: "download-post-media" }, { id: 7, url: "https://weibo.com/42/ABC" });
+  click();
+  await vm.runInContext("operation", app.context);
+  pictures[0] = { url: "https://wx1.sinaimg.cn/large/second.jpg" };
+  click();
+  await vm.runInContext("operation", app.context);
+  assert.equal(app.started.length, 1);
+  assert.match(app.stored.job.images[0].url, /first.jpg$/);
+  assert.equal(app.stored.pendingJobs.length, 1);
+  assert.match(app.stored.pendingJobs[0].images[0].url, /second.jpg$/);
+  pictures[0] = { url: "https://wx1.sinaimg.cn/large/third.jpg" };
+  app.listeners.downloadChanged({ id: 1, state: { current: "complete" } });
+  await vm.runInContext("operation", app.context);
+  assert.equal(app.started.length, 2);
+  assert.match(app.stored.job.images[0].url, /second.jpg$/);
+  assert.equal(app.stored.pendingJobs.length, 0);
+});

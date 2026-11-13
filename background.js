@@ -170,6 +170,18 @@ async function finishIfDone(job) {
   const reason = job.qualityWarning || job.images.find(image => image.state === "failed")?.error ||
     (job.imageMissing ? `${job.imageMissing} 个原图或 Live 地址未能解析，未开始下载` : "");
   await toast(job.tabId, `帖子媒体下载完成：成功 ${done} 个文件${existing ? `，已存在 ${existing} 个文件跳过` : ""}${skipped ? `，跳过 ${skipped} 张屏蔽图` : ""}，失败 ${failed} 个文件。${failed && reason ? `原因：${reason.slice(0, 140)}。` : ""}点击插件图标查看详情。`);
+  await startNextJob();
+}
+
+async function startNextJob() {
+  const current = await getJob();
+  if (current?.status === "running") return;
+  const { pendingJobs = [] } = await chrome.storage.local.get("pendingJobs");
+  if (!pendingJobs.length) return;
+  const next = pendingJobs.shift();
+  next.status = "running";
+  await chrome.storage.local.set({ job: next, pendingJobs });
+  await activateJob(next);
 }
 
 async function pump(job) {
@@ -230,15 +242,11 @@ async function pump(job) {
   await finishIfDone(job);
 }
 
-async function startDownload(tab, site = "weibo") {
+async function startDownload(tab, site = "weibo", resolved) {
   const previous = await getJob();
-  if (previous?.status === "running") {
-    await toast(tab.id, "已有一篇帖子正在下载，请等待完成后再试。");
-    return;
-  }
   let response;
   try {
-    response = await chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_MEDIA" });
+    response = resolved ? await resolved : await chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_MEDIA" });
   } catch {
     await toast(tab.id, "无法读取当前页面，请刷新页面后重试。");
     return;
@@ -249,7 +257,7 @@ async function startDownload(tab, site = "weibo") {
   }
 
   const data = response.data;
-  await importPreviousDownloads(previous);
+  if (previous?.status !== "running") await importPreviousDownloads(previous);
   const media = [...(data.pictures || []).map(picture => ({ ...picture, kind: "image" })),
     ...(data.videos || []).map(video => ({ ...video, kind: "video" }))];
   const images = media.flatMap((picture, index) => [
@@ -263,8 +271,23 @@ async function startDownload(tab, site = "weibo") {
     missing: data.missing, imageMissing: data.imageMissing, videoMissing: data.videoMissing, images, status: "running",
     qualitySource: data.qualitySource, qualityWarning: data.qualityWarning
   };
+  const { pendingJobs = [] } = await chrome.storage.local.get("pendingJobs");
+  if (previous?.status === "running" || pendingJobs.length) {
+    job.status = "waiting";
+    pendingJobs.push(job);
+    await chrome.storage.local.set({ pendingJobs });
+    await toast(tab.id, `已加入下载队列，前方有 ${pendingJobs.length - 1} 个等待任务。`);
+    if (previous?.status !== "running") await startNextJob();
+    return;
+  }
+  await activateJob(job);
+}
+
+async function activateJob(job) {
+  const { images, site } = job;
+  job.status = "running";
   await saveJob(job);
-  await toast(tab.id, `已识别 ${data.pictures?.length || 0} 张图片、${data.videos?.length || 0} 个视频，开始下载。${job.missing ? `另有 ${job.missing} 个媒体文件不可用。` : ""}${job.qualityWarning || ""}`);
+  await toast(job.tabId, `已识别 ${images.filter(image => image.kind === "image").length} 张图片、${images.filter(image => image.kind === "video").length} 个视频，开始下载。${job.missing ? `另有 ${job.missing} 个媒体文件不可用。` : ""}${job.qualityWarning || ""}`);
   try {
     await setImageReferrers(images, site);
   } catch (error) {
@@ -321,7 +344,7 @@ async function handleDownloadChange(delta) {
 async function recover() {
   const job = await getJob();
   await showBadge(job);
-  if (job?.status !== "running") return;
+  if (job?.status !== "running") { await startNextJob(); return; }
   for (const image of job.images) {
     if (image.state === "starting") {
       image.state = "failed";
@@ -373,6 +396,10 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   try { host = new URL(tab.url || info.pageUrl).hostname; } catch { return; }
   const site = /^(www\.)?weibo\.com$/.test(host) ? "weibo" : host === "www.instagram.com" ? "instagram"
     : /^(www\.)?(x|twitter)\.com$/.test(host) ? "x" : null;
-  if (site) runSerial(() => startDownload(tab, site));
+  if (site) {
+    const resolved = chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_MEDIA" })
+      .catch(() => ({ ok: false, error: "无法读取当前页面，请刷新页面后重试。" }));
+    runSerial(() => startDownload(tab, site, resolved));
+  }
 });
 chrome.downloads.onChanged.addListener(delta => runSerial(() => handleDownloadChange(delta)));

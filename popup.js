@@ -5,6 +5,7 @@ document.getElementById("open-options").addEventListener("click", () => chrome.r
 
 async function render() {
   const { job } = await chrome.storage.local.get("job");
+  const { pendingJobs = [] } = await chrome.storage.local.get("pendingJobs");
   errors.replaceChildren();
   if (!job) {
     summary.textContent = "在微博、Instagram 或 X 帖子上右键，选择“下载这篇帖子的图片和视频”，自动识别并保存。";
@@ -16,6 +17,7 @@ async function render() {
   const failed = job.images.filter(image => image.state === "failed").length + job.missing;
   const total = job.images.length + job.missing;
   summary.textContent = `${job.author} · ${job.status === "running" ? "下载中" : "已完成"}：${complete}/${total} 个文件成功${existing ? `，${existing} 个文件已存在并跳过` : ""}${skipped ? `，${skipped} 张屏蔽图跳过` : ""}，${failed} 个文件失败`;
+  if (pendingJobs.length) summary.textContent += `。队列中还有 ${pendingJobs.length} 篇帖子等待下载。`;
   const videos = job.images.filter(item => item.kind === "video");
   const hasPictures = job.images.some(item => item.kind === "image");
   if (videos.length) {
@@ -44,6 +46,6 @@ function addError(text) {
 }
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.job) render();
+  if (area === "local" && (changes.job || changes.pendingJobs)) render();
 });
 render();

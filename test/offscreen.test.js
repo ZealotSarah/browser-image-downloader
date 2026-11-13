@@ -83,6 +83,34 @@ test("微博大图读取中断后按范围拼接，拒绝错位分段", async ()
   }
 });
 
+test("微博大视频读取中断后分段恢复并校验 MP4 文件头", async () => {
+  const url = "https://f.video.weibocdn.com/o0/clip.mp4?Expires=123&ssig=abc";
+  const data = new Uint8Array(4 * 1024 * 1024 + 1);
+  data.set([102, 116, 121, 112], 4);
+  const ranges = [];
+  const app = loadOffscreen(async (requested, options) => {
+    assert.equal(requested, url);
+    assert.equal(options.credentials, "include");
+    assert.equal(options.cache, "no-store");
+    const range = options.headers?.Range;
+    const headers = { "content-type": "video/mp4", etag: '"video"' };
+    if (!range) return { ok: true, status: 200, url,
+      headers: { get: key => key === "content-length" ? String(data.length) : headers[key] },
+      blob: async () => { throw new TypeError("Failed to fetch"); } };
+    ranges.push(range);
+    const [, start, end] = /bytes=(\d+)-(\d+)/.exec(range);
+    headers["content-range"] = `bytes ${start}-${end}/${data.length}`;
+    return { status: 206, headers: { get: key => headers[key] },
+      blob: async () => new Blob([data.slice(Number(start), Number(end) + 1)]) };
+  });
+  const result = await app.send({ type: "FETCH_IMAGE", kind: "video", site: "weibo", token: "video", url });
+  assert.equal(result.ok, true);
+  assert.equal(result.extension, ".mp4");
+  assert.equal(ranges.length, 2);
+  assert.equal(app.savedBlobs[0].size, data.length);
+  assert.equal(app.savedBlobs[0].type, "video/mp4");
+});
+
 test("拒绝图片站返回的 HTML 错误页", async () => {
   const app = loadOffscreen({ ok: true, headers: { get: () => "text/html" } });
   const result = await app.send({ type: "FETCH_IMAGE", token: "1", url: "https://wx1.sinaimg.cn/large/a.jpg" });
