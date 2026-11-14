@@ -239,9 +239,13 @@ test("视频下载拒绝把图片、音频或分片清单当作成功 MP4", asyn
 
 test("X 图片菜单复用 WebP + PNG 队列，独立作者目录和来源", async () => {
   const app = loadBackground([{ url: "https://pbs.twimg.com/media/photo?format=webp&name=orig" }], null, true);
-  app.listeners.menuClicked({ menuItemId: "download-post-media" }, { id: 7, url: "https://x.com/author/status/123" });
+  app.listeners.menuClicked({ menuItemId: "download-post-media", pageUrl: "https://x.com/author/status/123",
+    linkUrl: "https://x.com/author/status/123/video/1" }, { id: 7, url: "https://x.com/author/status/123" });
   await vm.runInContext("operation", app.context);
   assert.ok(app.messages.some(message => message.type === "RESOLVE_MEDIA"));
+  const request = app.messages.find(message => message.type === "RESOLVE_MEDIA");
+  assert.equal(request.pageUrl, "https://x.com/author/status/123");
+  assert.equal(request.linkUrl, "https://x.com/author/status/123/video/1");
   assert.equal(app.started.length, 2);
   assert.match(app.started[0].filename, /^X\/图片\/博主\/post1\/.*_01.webp$/);
   assert.match(app.started[1].filename, /^X\/图片\/博主\/post1\/.*_01.png$/);

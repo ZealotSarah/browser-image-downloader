@@ -397,7 +397,8 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   const site = /^(www\.)?weibo\.com$/.test(host) ? "weibo" : host === "www.instagram.com" ? "instagram"
     : /^(www\.)?(x|twitter)\.com$/.test(host) ? "x" : null;
   if (site) {
-    const resolved = chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_MEDIA" })
+    const resolved = chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_MEDIA",
+      ...(site === "x" ? { pageUrl: info.pageUrl || tab.url, linkUrl: info.linkUrl } : {}) })
       .catch(() => ({ ok: false, error: "无法读取当前页面，请刷新页面后重试。" }));
     runSerial(() => startDownload(tab, site, resolved));
   }

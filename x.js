@@ -1,8 +1,10 @@
 (() => {
+  const XDownloads = globalThis.XDownloads;
   let lastContext = null;
-  document.addEventListener("contextmenu", event => {
+  function rememberContext(event) {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
     const card = target?.closest('article[data-testid="tweet"]');
+    const player = target?.closest('video, [data-testid="videoPlayer"], [data-testid="videoComponent"], [role="dialog"]');
     let postId = null;
     // A quoted post's timestamp must not replace the enclosing post's ID.
     for (const time of card?.querySelectorAll("time") || []) {
@@ -10,13 +12,35 @@
       postId = XDownloads.postIdFromUrl(time.closest("a[href]")?.href);
       if (postId) break;
     }
-    lastContext = card && postId ? { card, postId, pageUrl: location.href, time: Date.now() } : null;
+    if (card && !postId) {
+      const ids = new Set(Array.from(card.querySelectorAll("a[href]"), link => XDownloads.postIdFromUrl(link.href)).filter(Boolean));
+      if (ids.size === 1) postId = [...ids][0];
+    }
+    // Media viewers can render the player outside the tweet article.
+    if (!card && player) postId = XDownloads.postIdFromUrl(location.href);
+    const scope = card || player;
+    const mediaIds = [];
+    for (const media of [scope, ...scope?.querySelectorAll('video[poster], img[src], [style*="background-image"]') || []]) {
+      if (!media) continue;
+      const id = XDownloads.videoMediaId(media.getAttribute?.("poster") || media.getAttribute?.("src") ||
+        media.getAttribute?.("style") || "");
+      if (id && !mediaIds.includes(id)) mediaIds.push(id);
+    }
+    lastContext = scope && postId ? { card: scope, postId, mediaIds, pageUrl: location.href, time: Date.now() } : null;
+  }
+  document.addEventListener("contextmenu", rememberContext, true);
+  document.addEventListener("pointerdown", event => {
+    if (event.button === 2) rememberContext(event);
   }, true);
 
-  async function resolvePost() {
-    const context = lastContext;
+  async function resolvePost(message) {
+    let context = lastContext;
     if (!context?.card.isConnected || context.pageUrl !== location.href || Date.now() - context.time > 30000) {
-      throw new Error("未找到右键所在的 X 帖子，请在帖子内容区域重试");
+      // Chrome's native media menu may not dispatch a DOM contextmenu event.
+      const postId = message.pageUrl === location.href &&
+        (XDownloads.postIdFromUrl(message.linkUrl) || XDownloads.postIdFromUrl(message.pageUrl));
+      if (!postId) throw new Error("无法定位 X 帖子（0.4.16）：请打开原帖详情页后右键下载");
+      context = { postId, mediaIds: [] };
     }
     const post = await new Promise(resolve => {
       const requestId = crypto.randomUUID();
@@ -28,7 +52,7 @@
       };
       const timer = setTimeout(() => { window.removeEventListener("message", listener); resolve(null); }, 1500);
       window.addEventListener("message", listener);
-      window.postMessage({ type: "BID_X_REQUEST", requestId, postId: context.postId }, location.origin);
+      window.postMessage({ type: "BID_X_REQUEST", requestId, postId: context.postId, mediaIds: context.mediaIds }, location.origin);
     });
     if (!post || post.postId !== context.postId) throw new Error("尚未取得这篇 X 帖子的媒体数据，请刷新页面，等待帖子加载后重试");
     const missing = post.videoMissing + post.pictureMissing;
@@ -48,7 +72,7 @@
   }
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "RESOLVE_MEDIA") {
-      resolvePost().then(data => sendResponse({ ok: true, data }))
+      resolvePost(message).then(data => sendResponse({ ok: true, data }))
         .catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
     }

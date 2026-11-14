@@ -48,6 +48,8 @@ Instagram 媒体接口受限、超时或变更时，如果当前有播放器或�
 
 ## 本地检查
 
+修改 X 的解析库或入口（`video-lib.js`、`x-lib.js`、`x-capture.js`、`x.js`）后，先运行 `node scripts/build-x.js`，更新清单实际加载的 `x-main.js` 和 `x-content.js`。两份脚本分别包含各自环境需要的解析库，不依赖跨文件全局变量。
+
 ```powershell
 node --test test
 ```
