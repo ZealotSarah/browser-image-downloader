@@ -28,7 +28,7 @@
     },
     {
       "matches": ["https://x.com/*", "https://www.x.com/*", "https://twitter.com/*", "https://www.twitter.com/*"],
-      "js": ["x-content.js"],
+      "js": ["video-lib.js", "x-lib.js", "x.js"],
       "run_at": "document_start"
     }
   ]
