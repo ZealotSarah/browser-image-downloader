@@ -21,9 +21,9 @@ function loadCapture() {
     postMessage(message) { messages.push(message); } };
   const context = vm.createContext({ URL, window, XMLHttpRequest: Xhr,
     location: { href: "https://x.com/home", origin: "https://x.com" } });
-  for (const file of ["video-lib.js", "x-lib.js", "x-capture.js"]) {
-    vm.runInContext(fs.readFileSync(path.join(__dirname, "..", file), "utf8"), context);
-  }
+  // x-capture.js must stay self-contained: it runs in the main world and shares
+  // no file with the isolated-world content scripts.
+  vm.runInContext(fs.readFileSync(path.join(__dirname, "..", "x-capture.js"), "utf8"), context);
   const request = (postId = "123", origin = "https://x.com") => {
     listeners.message({ source: window, origin, data: { type: "BID_X_REQUEST", requestId: "request", postId } });
     return messages.at(-1);
@@ -39,8 +39,9 @@ test("页面 fetch 返回原响应，仅读取当前站点的推文 API 响应",
   assert.equal(await app.window.fetch("/i/api/graphql/query/TweetDetail"), app.response);
   await Promise.resolve();
   const result = app.request();
-  assert.equal(result.post.postId, "123");
-  assert.equal(result.post.pictures.length, 1);
+  assert.equal(result.post.rest_id, "123");
+  assert.equal(result.post.legacy.entities.media.length, 1);
+  assert.equal(result.post.core.user_results.result.core.screen_name, "author");
   assert.doesNotMatch(JSON.stringify(result), /not exported/);
   const count = app.messages.length;
   app.request("123", "https://other.example");
@@ -55,7 +56,8 @@ test("XHR 保留原有参数及返回行为，并捕获媒体响应", () => {
   assert.deepEqual(xhr.openArgs, ["GET", "/i/api/graphql/query/TweetDetail", true]);
   assert.deepEqual(xhr.sendArgs, [null]);
   xhr.responseType = "json";
-  xhr.response = { rest_id: "123", core: { user_results: { result: { legacy: { screen_name: "author" } } } }, legacy: {} };
+  xhr.response = { rest_id: "123", core: { user_results: { result: { legacy: { screen_name: "author" } } } },
+    legacy: { full_text: "hi", extended_entities: { media: [{ id_str: "1", type: "photo", media_url_https: "https://pbs.twimg.com/media/a.jpg" }] } } };
   xhr.load();
-  assert.equal(app.request().post.author, "author");
+  assert.equal(app.request().post.core.user_results.result.core.screen_name, "author");
 });

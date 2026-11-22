@@ -167,7 +167,7 @@ Chrome 的右键菜单点击信息提供页面 URL、图片 URL 等上下文，�
 
 ## 10. X（Twitter）图片与视频（0.4.0）
 
-- 两个独立右键菜单覆盖 `x.com`、`twitter.com` 及其 www 地址。内容脚本从 `article[data-testid="tweet"]` 的时间戳永久链接确定精确帖子 ID，记录右键页面和时间并在下载前校验；不能定位卡片的独立媒体弹层不进行猜测。
+- 唯一右键菜单覆盖 `x.com`、`twitter.com` 及其 www 地址。内容脚本从 `article[data-testid="tweet"]` 的时间戳永久链接确定精确帖子 ID，记录右键页面和时间并在下载前校验。0.4.17 起定位规则见第 18 节。
 - `x-capture.js` 以 MAIN world、document_start 注入，仅观察当前页面同源 `/i/api/graphql/` 和 `/i/api/2/timeline/` 响应。fetch 克隆 JSON 响应、XHR 监听 load；不更改原请求参数，不读取或复制认证头和 Cookie。`x-lib.js` 遍历响应并只保留 ID、作者和媒体下载所需字段，不导出正文。按 ID 缓存最近 200 篇媒体摘要，仅在页面内存保留。
 - 隔离世界的 `x.js` 通过同源 window 消息按右键 ID 请求缓存，校验来源、请求 ID 和返回帖子 ID；无缓存时明确提示刷新等待网页加载，不伪造 API 请求或降级至页面播放流。数据桥由页面共享，不作为信任边界；真正下载时仍通过站点 CDN 白名单校验 URL，并清理文件名。
 - 图片只接受 `https://pbs.twimg.com/media/`，将尺寸参数改为 `name=orig`，保留支持的 JPG/PNG/WebP 格式。头像、视频封面及其他域名不进入图片队列。WebP 复用 Instagram 的原文件 + PNG 副本管线。
@@ -229,3 +229,36 @@ Chrome 的右键菜单点击信息提供页面 URL、图片 URL 等上下文，�
 - 旧设置不影响结构，媒体身份去重保持不变；已有文件不自动迁移，仍存在的成功文件继续跳过。安装包为 `dist/browser-image-downloader-0.4.7.zip`。
 
 - 74 项自动测试通过。本机 Downloads 中 554 个微博文件及 9 个 Instagram 文件已迁移，逐文件 SHA-256 校验通过；无 X 文件。迁移清单：C:/Users/neuqsoft/Downloads/媒体帖子目录迁移_20261026_141611.json。旧空目录保留。外部迁移后 Chrome 旧下载记录可能失效，后续可能重新下载。
+
+## 18. X 帖子定位与页面兜底（0.4.16 / 0.4.17）
+
+- 0.4.15 之前只用一次右键快照定位帖子：`lastContext = { card, postId, pageUrl, time }`，并在下载前校验 `card.isConnected`、`pageUrl === location.href`、`Date.now() - time <= 30s`。四类常见情况因此必然失败：右键落在图片查看器或独立图片层（没有 `article`）、帖子尚未渲染出时间链接、右键后页面重渲染替换卡片、右键落在帖子内嵌播放器 iframe（事件不进本帧）；30 秒内没点菜单也会失败。
+- 0.4.17 改为快照 + 指针停留 + 现场重定位。`contextmenu` 记录卡片、帖子 ID、坐标与 `origin+pathname`（有效期 5 分钟）；`pointermove` 持续记录指针最后停留的帖子卡片（有效期 10 分钟，同一卡片只更新坐标与时间，不重复解析）。在纯文本或空白处右键会清除指针停留记录，避免沿用上一篇帖子；右键落在 `img/video/role=dialog/tweetPhoto/videoPlayer/videoComponent` 等媒体容器但不在卡片内时保留该记录，覆盖图片查看器与播放器控制层。
+- 候选 ID 顺序：快照帖子 → 右键坐标处 `elementFromPoint` 的卡片 → 指针停留的卡片 → 当前详情页地址。卡片 ID 解析顺序：本卡片时间链接 → 唯一的图片/视频链接 → 唯一的帖子链接；`time`/链接的最近 `article` 祖先必须就是该卡片，引用帖的链接因此不参与。成功解析的 ID 以 `WeakMap` 缓存，卡片被移除后仍可用记录中的 ID 继续。
+- 逐个候选向 MAIN world 请求缓存，命中且含媒体即返回；帖子存在但无媒体、或接口未观察到该帖时，回退读取卡片上已渲染的 `pbs.twimg.com/media/` 图片并改写为 `name=orig`，把图片锚点指向其他帖子 ID 的（引用帖）排除，`qualitySource` 标记为 `page` 并给出画质说明；视频仍要求接口数据，只统计为缺失并提示刷新。错误分为“未定位到帖子”“接口与页面都没有媒体”“帖子没有图片或视频”三种。
+- 事件路由优先发给右键所在帧（`info.frameId`），失败后回退主帧；`x-capture.js` 的同源观察范围扩大到 `/i/api/graphql/`、`/i/api/2/`、`/i/api/1.1/`。数据桥仍是页面共享内存，不作为信任边界；下载阶段继续按 CDN 白名单校验地址并清理文件名。
+- 本地检查：90 项自动测试通过，其中 X 定位 13 项。新增 `tools/x-browser-check.mjs`，在 `https://x.com:<port>`（域名映射到 127.0.0.1、自签证书、`--no-proxy-server`）上加载真实的 `x-capture.js`/`x.js`，用 CDP 派发真实 `contextmenu`、`pointermove` 事件，8 项场景全部通过。该检查只验证定位与解析，不验证真实账号下的下载落盘。
+
+## 19. 内容脚本分世界注入（0.4.18）
+
+- 症状：真实扩展里右键任何 X 帖子都报 `XDownloads is not defined`；本地模拟页（同一上下文加载 `x-lib.js` 与 `x.js`）完全复现不出来。
+- 根因：X 的两条 `content_scripts` 条目同时写了 `["video-lib.js", "x-lib.js", …]`，一条 `world: "MAIN"`（`x-capture.js`），一条默认隔离世界（`x.js`）。Chrome 对同一扩展的同一文件在一次页面加载中只注入一次，MAIN world 那一条先注册先执行，隔离世界那份被跳过。`x.js` 因此在没有 `XDownloads` 的环境里运行。
+- 同源证据：用 CDP `Extensions.loadUnpacked` 加载真实扩展后，MAIN world `typeof XDownloads === "object"`，而 `chrome.tabs.sendMessage({type:"RESOLVE_MEDIA"})` 在隔离世界抛出 `ReferenceError: XDownloads is not defined at postIdFromCard (x.js:44)`。
+- 结论：**跨 world 的脚本不能共用文件**。MAIN world 的 `x-capture.js` 改为自包含：自己遍历接口 JSON、`trim` 成只含 `rest_id`/`legacy.entities.media`/作者 `screen_name` 的最小对象，`postMessage` 交给隔离世界；解析仍只在 `x-lib.js` 里实现一次。
+- `trim` 顺带降低共享内存占用并避免把正文写进桥接对象；`isTweet` 以 `legacy.full_text` 或媒体字段判定，排除同样带 `legacy.id_str` 的用户对象。
+- `x.js` 改为 `const lib = globalThis.XDownloads`，库缺失时直接回一条可操作错误，不再让每个 `contextmenu` 抛 `ReferenceError`。
+- 防回归：`test/content-scripts.test.js` 断言同一 `matches` 下的两条条目不得共用脚本、MAIN 条目只能有 `x-capture.js` 且不引用共享库、隔离条目顺序为 `video-lib.js → x-lib.js → x.js`、`offscreen.html` 必须加载下载所需脚本。
+- 检查工具分工：`tools/x-browser-check.mjs` 验证定位与解析（单一上下文，8 项）；`tools/x-live-check.mjs` 加载真实扩展验证注入与桥接（未登录走页面兜底；`--fake-api` 拦截一次 TweetDetail 验证 `qualitySource: "media"` 与最佳视频变体）。本机 Chrome 157 需用 CDP `Extensions.loadUnpacked`，命令行 `--load-extension` 已不再可靠。
+
+## 20. Instagram 帖子定位（0.4.19）
+
+- 症状：右键 Instagram 图片报“未找到右键所在的 Instagram 帖子，请在帖子图片上重试”。
+- 旧实现（0.4.18 前）：`contextmenu` 时 `target.closest("article")` 取卡片，下载前校验 `card.isConnected`、`location.href` 完全相等、30 秒有效期；`postCard` 的回退分支要求容器内含唯一帖子链接。Instagram 当前页面几乎没有 `article`（信息流卡片与详情弹层都是 div），且地址会带 `?img_index=`，`href` 比较必然失败。
+- 新实现：
+  - `findCard`：先 `closest("article")`；否则从命中节点向上，找“帖子 ID 集合恰好为 1 且含媒体”的容器；遇到集合大于 1 说明跨进了列表，立即放弃；到达 `body`/`documentElement` 前必须停下（否则整页会被当成一篇帖子，页面兜底会把推荐图一起下载）。
+  - 记录 `{card, postId, point, path, time}`，`path` 只取 `location.pathname`，有效期 5 分钟；另记录 `pointermove` 停留卡片（10 分钟），覆盖弹层/播放器吞掉右键的情况；空白或纯文本处右键清除停留记录。
+  - 候选顺序：快照帖子 → 坐标处 `elementFromPoint` 卡片 → 指针停留卡片 → 地址里的帖子 ID；无卡片的候选自动挂上唯一的 `article` 或已有容器，使页面兜底仍可用。
+  - 接口失败时先尝试页面兜底图片；仅当兜底也拿不到图片且容器存在视频时才报“无法获取最高规格视频”，避免图片帖因页面上的推荐视频被误判。reel 地址仍直接要求接口。
+  - `collectPictures` 排除指向其他帖子链接的图片（推荐位），保留无链接的大图（详情页主图），并沿用尺寸、头像、`aria-hidden`、故事外链过滤。
+  - 作者名兜底顺序：容器内 `header` 作者链接 → `/<user>/p/<id>/` 形式的地址。
+- 测试与实测：Instagram 15 项单测（信息流、无 article 详情页、推荐帖隔离、`img_index`、卡片重渲染、记录过期、独立图片查看器、空白右键、视频帖、混合帖）；`tools/instagram-live-check.mjs` 用 CDP `Extensions.loadUnpacked` 加载真实扩展，在未登录的真实页面上验证详情页（7 张轮播图、作者 gengeller）与信息流卡片（帖子 ID + 页面图）均正常，无异常。

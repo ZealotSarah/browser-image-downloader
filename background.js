@@ -28,7 +28,7 @@ async function saveJob(job) {
 
 async function toast(tabId, text) {
   if (!tabId) return;
-  try { await chrome.tabs.sendMessage(tabId, { type: "TOAST", text }); } catch { /* Tab may have closed. */ }
+  try { await chrome.tabs.sendMessage(tabId, { type: "TOAST", text }, { frameId: 0 }); } catch { /* Tab may have closed. */ }
 }
 
 async function setImageReferrers(images, site = "weibo") {
@@ -246,7 +246,7 @@ async function startDownload(tab, site = "weibo", resolved) {
   const previous = await getJob();
   let response;
   try {
-    response = resolved ? await resolved : await chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_MEDIA" });
+    response = resolved ? await resolved : await chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_MEDIA" }, { frameId: 0 });
   } catch {
     await toast(tab.id, "无法读取当前页面，请刷新页面后重试。");
     return;
@@ -397,8 +397,13 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   const site = /^(www\.)?weibo\.com$/.test(host) ? "weibo" : host === "www.instagram.com" ? "instagram"
     : /^(www\.)?(x|twitter)\.com$/.test(host) ? "x" : null;
   if (site) {
-    const resolved = chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_MEDIA" })
-      .catch(() => ({ ok: false, error: "无法读取当前页面，请刷新页面后重试。" }));
+    // Prefer the frame that was right-clicked, then fall back to the top frame.
+    const frameId = info.frameId || 0;
+    const resolved = chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_MEDIA" }, { frameId })
+      .then(response => (response?.ok || frameId === 0 ? response
+        : chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_MEDIA" }, { frameId: 0 })))
+      .catch(() => chrome.tabs.sendMessage(tab.id, { type: "RESOLVE_MEDIA" }, { frameId: 0 })
+        .catch(() => ({ ok: false, error: "无法读取当前页面，请刷新页面后重试。" })));
     runSerial(() => startDownload(tab, site, resolved));
   }
 });
