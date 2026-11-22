@@ -21,6 +21,21 @@ globalThis.XDownloads = (() => {
     } catch { return null; }
   }
 
+  function videoMediaId(raw) {
+    if (typeof raw !== "string") return null;
+    return raw.match(/\/(?:ext_tw_video|amplify_video)(?:_thumb)?\/(\d+)\//)?.[1] ||
+      raw.match(/\/tweet_video(?:_thumb)?\/([A-Za-z0-9_-]+)(?:\.[A-Za-z0-9]+)?(?:[?#]|$)/)?.[1] || null;
+  }
+
+  function parseVideoInfo(videoInfo) {
+    const variants = (videoInfo?.variants || []).filter(variant => variant.content_type === "video/mp4").map(variant => {
+      const dimensions = variant.url?.match(/\/(\d+)x(\d+)\//);
+      return { url: variant.url, width: Number(dimensions?.[1]), height: Number(dimensions?.[2]),
+        bitrate: variant.bitrate || 0, mime: variant.content_type };
+    });
+    return globalThis.VideoDownloads.best(variants, "x");
+  }
+
   function parseTweet(tweet) {
     const legacy = tweet.legacy;
     const postId = String(tweet.rest_id || legacy?.id_str || "");
@@ -38,12 +53,7 @@ globalThis.XDownloads = (() => {
         if (url) pictures.push({ id: String(media.id_str || pictures.length + 1), url });
         else pictureMissing++;
       } else if (media.type === "video" || media.type === "animated_gif") {
-        const variants = (media.video_info?.variants || []).filter(variant => variant.content_type === "video/mp4").map(variant => {
-          const dimensions = variant.url?.match(/\/(\d+)x(\d+)\//);
-          return { url: variant.url, width: Number(dimensions?.[1]), height: Number(dimensions?.[2]),
-            bitrate: variant.bitrate || 0, mime: variant.content_type };
-        });
-        const selected = VideoDownloads.best(variants, "x");
+        const selected = parseVideoInfo(media.video_info);
         if (selected) videos.push({ id: String(media.id_str || videos.length + 1), ...selected });
         else videoMissing++;
       }
@@ -65,5 +75,21 @@ globalThis.XDownloads = (() => {
     return [...posts.values()];
   }
 
-  return { postIdFromUrl, imageUrl, parseTweet, collectPosts };
+  function collectVideos(data) {
+    const videos = new Map();
+    const stack = [data];
+    while (stack.length) {
+      const value = stack.pop();
+      if (!value || typeof value !== "object") continue;
+      if (Array.isArray(value.variants)) {
+        const selected = parseVideoInfo(value);
+        const mediaId = videoMediaId(selected?.url || "");
+        if (selected && mediaId) videos.set(mediaId, { id: mediaId, ...selected });
+      }
+      stack.push(...Object.values(value).filter(child => child && typeof child === "object"));
+    }
+    return [...videos.values()];
+  }
+
+  return { postIdFromUrl, imageUrl, videoMediaId, parseTweet, collectPosts, collectVideos };
 })();

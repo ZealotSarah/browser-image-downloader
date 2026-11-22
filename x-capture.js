@@ -3,6 +3,7 @@
    entries (one MAIN, one isolated) is only injected into one world, so the
    main-world script cannot share video-lib.js or x-lib.js with x.js. */
 (() => {
+  const XDownloads = globalThis.XDownloads;
   const posts = new Map();
 
   function isTweetApi(raw) {
@@ -56,7 +57,9 @@
       }
       stack.push(...Object.values(value).filter(child => child && typeof child === "object"));
     }
+    for (const video of XDownloads.collectVideos(data)) videos.set(video.id, video);
     while (posts.size > 200) posts.delete(posts.keys().next().value);
+    while (videos.size > 400) videos.delete(videos.keys().next().value);
   }
 
   const originalFetch = window.fetch;
@@ -84,8 +87,17 @@
   };
   window.addEventListener("message", event => {
     if (event.source !== window || event.origin !== location.origin || event.data?.type !== "BID_X_REQUEST") return;
-    const { requestId, postId } = event.data;
+    const { requestId, postId, mediaIds = [] } = event.data;
     if (typeof requestId !== "string" || requestId.length > 100 || !/^\d+$/.test(postId)) return;
-    window.postMessage({ type: "BID_X_RESPONSE", requestId, post: posts.get(postId) || null }, location.origin);
+    const post = posts.get(postId);
+    if (!post) {
+      window.postMessage({ type: "BID_X_RESPONSE", requestId, post: null }, location.origin);
+      return;
+    }
+    const matched = Array.isArray(mediaIds) ? mediaIds.slice(0, 8).map(id => videos.get(id)).filter(Boolean) : [];
+    const known = new Set(post.videos.map(video => video.id));
+    const recovered = matched.filter(video => !known.has(video.id));
+    window.postMessage({ type: "BID_X_RESPONSE", requestId, post: { ...post,
+      videos: [...post.videos, ...recovered], videoMissing: Math.max(0, post.videoMissing - recovered.length) } }, location.origin);
   });
 })();

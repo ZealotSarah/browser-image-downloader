@@ -262,7 +262,7 @@
   }
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "RESOLVE_MEDIA") {
-      resolvePost().then(data => sendResponse({ ok: true, data }))
+      resolvePost(message).then(data => sendResponse({ ok: true, data }))
         .catch(error => sendResponse({ ok: false, error: error.message }));
       return true;
     }

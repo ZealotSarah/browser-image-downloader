@@ -66,3 +66,18 @@ test("只有分片流、未知分辨率或站外视频时计入失败，GIF 作�
   value.legacy.extended_entities.media[1].type = "animated_gif";
   assert.equal(lib.parseTweet(value).videos.length, 1);
 });
+
+test("敏感媒体可按缩略图共有的媒体 ID 找回 amplify_video 最高规格", () => {
+  const mediaId = "2121505951799001088";
+  assert.equal(lib.videoMediaId(`https://pbs.twimg.com/amplify_video_thumb/${mediaId}/img/cover.jpg`), mediaId);
+  const videos = lib.collectVideos({ player: { video_info: { variants: [
+    { content_type: "video/mp4", bitrate: 2176000,
+      url: `https://video.twimg.com/amplify_video/${mediaId}/vid/avc1/960x720/low.mp4?tag=29` },
+    { content_type: "video/mp4", bitrate: 25128000,
+      url: `https://video.twimg.com/amplify_video/${mediaId}/vid/avc1/2880x2160/original.mp4?tag=29` }
+  ] } } });
+  assert.equal(videos.length, 1);
+  assert.equal(videos[0].id, mediaId);
+  assert.equal(videos[0].width, 2880);
+  assert.equal(videos[0].height, 2160);
+});

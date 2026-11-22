@@ -19,7 +19,7 @@ function loadCapture() {
   const window = { fetch: async () => response,
     addEventListener(type, callback) { listeners[type] = callback; },
     postMessage(message) { messages.push(message); } };
-  const context = vm.createContext({ URL, window, XMLHttpRequest: Xhr,
+  const context = vm.createContext({ URL, window, XMLHttpRequest: Xhr, globalThis: {},
     location: { href: "https://x.com/home", origin: "https://x.com" } });
   // x-capture.js must stay self-contained: it runs in the main world and shares
   // no file with the isolated-world content scripts.
@@ -60,4 +60,22 @@ test("XHR 保留原有参数及返回行为，并捕获媒体响应", () => {
     legacy: { full_text: "hi", extended_entities: { media: [{ id_str: "1", type: "photo", media_url_https: "https://pbs.twimg.com/media/a.jpg" }] } } };
   xhr.load();
   assert.equal(app.request().post.core.user_results.result.core.screen_name, "author");
+});
+
+test("敏感媒体播放器响应按页面媒体 ID 补回原帖视频", () => {
+  const app = loadCapture();
+  const mediaId = "2121505951799001088";
+  const xhr = new app.Xhr();
+  xhr.open("GET", "/i/api/graphql/query/TweetDetail", true);
+  xhr.send();
+  xhr.responseType = "json";
+  xhr.response = { rest_id: "123", core: { user_results: { result: { core: { screen_name: "author" } } } },
+    legacy: { extended_entities: { media: [{ type: "video", video_info: { variants: [] } }] } },
+    player: { video_info: { variants: [{ content_type: "video/mp4", bitrate: 25128000,
+      url: `https://video.twimg.com/amplify_video/${mediaId}/vid/avc1/2880x2160/original.mp4?tag=29` }] } } };
+  xhr.load();
+  const post = app.request("123", "https://x.com", [mediaId]).post;
+  assert.equal(post.videos.length, 1);
+  assert.equal(post.videos[0].width, 2880);
+  assert.equal(post.videoMissing, 0);
 });
